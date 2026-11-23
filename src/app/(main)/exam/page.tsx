@@ -32,7 +32,7 @@ export default async function ExamOverviewPage() {
               </div>
               {o.current.status === "graded" && o.current.id ? (
                 <Link href={`/exam/${o.current.id}/results`} className="tabular text-[17px] font-medium hover:underline">
-                  {formatScore(o.current.score)} / 100
+                  {formatScore(o.current.score)} / {o.current.maxScore}
                 </Link>
               ) : o.current.status === "submitted" && o.current.id ? (
                 <Link href={`/exam/${o.current.id}/results`} className="text-[15px] text-ink-2 hover:text-ink">
@@ -90,7 +90,7 @@ export default async function ExamOverviewPage() {
                 <Link href={`/exam/${h.id}/results`} className="grid grid-cols-[1fr_auto] items-center gap-4 py-3 hover:bg-subtle/60 sm:grid-cols-[200px_1fr_auto]">
                   <span className="text-[15px]">{formatDate(h.weekOf, lang, { day: "numeric", month: "long", year: "numeric" })}</span>
                   <span className="hidden text-[15px] text-ink-2 sm:block">{name(h.kind, h.number)}</span>
-                  <span className="tabular text-[15px] font-medium">{h.status === "graded" ? `${formatScore(h.score)} / 100` : t("exam.grading")}</span>
+                  <span className="tabular text-[15px] font-medium">{h.status === "graded" ? `${formatScore(h.score)} / ${h.maxScore}` : t("exam.grading")}</span>
                 </Link>
               </li>
             ))}

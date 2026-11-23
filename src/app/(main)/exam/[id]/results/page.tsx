@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Fragment } from "react";
 import { ResultsPoller } from "@/components/exam/results-poller";
 import { Bar, Note, PageTitle, Section } from "@/components/ui/primitives";
 import { personLabel, tenseName } from "@/lib/conjugation/labels";
@@ -29,7 +30,7 @@ export default async function ResultsPage({ params }: { params: Promise<{ id: st
   const title = r.kind === "monthly" ? t("overview.monthlyExam", { n: r.number }) : t("overview.weeklyExam", { n: r.number });
   const cat = (c: string | null) => {
     if (!c) return null;
-    if (c.startsWith("dictation:")) return `${t("exam.parts.dictation")}: ${t(`exam.dictationErrors.${c.slice(10)}` as MessageKey).toLowerCase()}`;
+    if (c.startsWith("dictation:")) return `${t("exam.parts.dictation")}${t("common.colon")}${t(`exam.dictationErrors.${c.slice(10)}` as MessageKey).toLowerCase()}`;
     return CATEGORY_KEYS.has(c) ? t(`study.categories.${c}` as MessageKey) : c;
   };
 
@@ -59,14 +60,14 @@ export default async function ResultsPage({ params }: { params: Promise<{ id: st
           <div className="flex min-w-0 flex-col gap-1">
             <div className="text-[15px]">{prompt(i)}</div>
             <div className="text-[15px]">
-              <span className="text-ink-3">{t("common.yourAnswer")}: </span>
+              <span className="text-ink-3">{t("common.yourAnswer")}{t("common.colon")}</span>
               <span className={it.correct ? "text-positive" : "text-negative"} lang="es">
                 {it.answer || "–"}
               </span>
             </div>
             {!it.correct && (
               <div className="text-[15px]">
-                <span className="text-ink-3">{part === "translation" ? t("exam.corrected") : t("common.expected")}: </span>
+                <span className="text-ink-3">{part === "translation" ? t("exam.corrected") : t("common.expected")}{t("common.colon")}</span>
                 <span lang="es">{it.expected}</span>
               </div>
             )}
@@ -94,9 +95,9 @@ export default async function ResultsPage({ params }: { params: Promise<{ id: st
         <div className="mt-2">
           <PageTitle aside={formatDate(r.weekOf, lang)}>{title}</PageTitle>
         </div>
-        <div className="-mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        <div className="mt-4 flex flex-wrap items-baseline gap-x-4 gap-y-1">
           <span className="tabular text-[44px] font-semibold tracking-[-0.02em]">{formatScore(r.score)}</span>
-          <span className="text-[17px] text-ink-3">/ 100</span>
+          <span className="text-[17px] text-ink-3">/ {r.maxScore}</span>
           {delta !== null && <span className="text-[15px] text-ink-2">{t("exam.previous", { delta: `${delta >= 0 ? "+" : ""}${formatScore(Math.round(delta * 10) / 10)}` })}</span>}
         </div>
         {g.provisional && (
@@ -116,7 +117,7 @@ export default async function ResultsPage({ params }: { params: Promise<{ id: st
                 <span className="col-span-2 row-start-2 sm:col-span-1 sm:row-start-1 sm:col-start-2">
                   <Bar value={s.score === null ? 0 : s.score / s.max} />
                 </span>
-                <span className="tabular text-right text-[15px] text-ink-2">{s.score === null ? t("exam.pendingAi") : `${formatScore(s.score)} / ${s.max}`}</span>
+                <span className="tabular text-right text-[15px] text-ink-2">{s.score === null ? t("exam.notGraded") : `${formatScore(s.score)} / ${s.max}`}</span>
               </li>
             );
           })}
@@ -150,23 +151,30 @@ export default async function ResultsPage({ params }: { params: Promise<{ id: st
         </Section>
       )}
 
-      <Section title={`${t("exam.corrections")}: ${t("exam.parts.dictation")}`}>
+      <Section title={`${t("exam.corrections")}${t("common.colon")}${t("exam.parts.dictation")}`}>
         {g.dictation && (
           <div className="flex flex-col gap-4">
             <p className="text-[17px] leading-loose" lang="es">
-              {g.dictation.tokens.map((tok, i) =>
-                tok.type === null ? (
-                  <span key={i}>{tok.ref} </span>
-                ) : tok.ref === null ? (
-                  <span key={i} className="text-negative line-through decoration-negative/60">
-                    {tok.hyp}{" "}
-                  </span>
-                ) : (
-                  <span key={i} title={tok.hyp ? `${t("common.yourAnswer")}: ${tok.hyp}` : undefined} className="text-negative underline decoration-negative/50 decoration-2 underline-offset-4">
-                    {tok.ref}{" "}
-                  </span>
-                ),
-              )}
+              {g.dictation.tokens.map((tok, i, all) => {
+                const text = tok.ref ?? tok.hyp ?? "";
+                const prev = i > 0 ? (all[i - 1]!.ref ?? all[i - 1]!.hyp ?? "") : "";
+                // Spanish spacing: none before closing punctuation, none after ¿ ¡ « (.
+                const space = i > 0 && !/^[.,;:!?…»)]$/.test(text) && !/^[¿¡«(]$/.test(prev) ? " " : "";
+                return (
+                  <Fragment key={i}>
+                    {space}
+                    {tok.type === null ? (
+                      <span>{text}</span>
+                    ) : tok.ref === null ? (
+                      <span className="text-negative line-through decoration-negative/60">{text}</span>
+                    ) : (
+                      <span title={tok.hyp ? `${t("common.yourAnswer")}${t("common.colon")}${tok.hyp}` : undefined} className="text-negative underline decoration-negative/50 decoration-2 underline-offset-4">
+                        {text}
+                      </span>
+                    )}
+                  </Fragment>
+                );
+              })}
             </p>
             <ul className="flex flex-col gap-1 text-[14px] text-ink-2">
               {g.dictation.tokens
@@ -184,7 +192,7 @@ export default async function ResultsPage({ params }: { params: Promise<{ id: st
         )}
       </Section>
 
-      <Section title={`${t("exam.corrections")}: ${t("exam.parts.conjugation")}`}>
+      <Section title={`${t("exam.corrections")}${t("common.colon")}${t("exam.parts.conjugation")}`}>
         {itemRows("conjugation", g.parts.conjugation.items, (i) => {
           const c = content.conjugation[i];
           if (!c) return null;
@@ -201,7 +209,7 @@ export default async function ResultsPage({ params }: { params: Promise<{ id: st
         })}
       </Section>
 
-      <Section title={`${t("exam.corrections")}: ${t("exam.parts.grammar")}`}>
+      <Section title={`${t("exam.corrections")}${t("common.colon")}${t("exam.parts.grammar")}`}>
         {g.parts.grammar.notes.includes("ai-unavailable") && <div className="mb-3"><Note>{t("exam.pendingAi")}</Note></div>}
         {itemRows("grammar", g.parts.grammar.items, (i) => {
           const q = content.grammar[i];
@@ -210,12 +218,12 @@ export default async function ResultsPage({ params }: { params: Promise<{ id: st
         })}
       </Section>
 
-      <Section title={`${t("exam.corrections")}: ${t("exam.parts.translation")}`}>
+      <Section title={`${t("exam.corrections")}${t("common.colon")}${t("exam.parts.translation")}`}>
         {g.parts.translation.notes.includes("approximate") && <div className="mb-3"><Note>{t("study.categories.approximate")}</Note></div>}
         {itemRows("translation", g.parts.translation.items, (i) => content.translation[i]?.source)}
       </Section>
 
-      <Section title={`${t("exam.corrections")}: ${t("exam.parts.writing")}`}>
+      <Section title={`${t("exam.corrections")}${t("common.colon")}${t("exam.parts.writing")}`}>
         <div className="flex flex-col gap-6">
           <p className="text-[16px] leading-relaxed text-ink-2">{content.writing.prompt}</p>
           {g.writing && g.writing.criteria.length > 0 ? (

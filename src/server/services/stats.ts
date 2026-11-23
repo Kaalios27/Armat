@@ -1,5 +1,7 @@
 import { and, desc, eq, gte, inArray, lt, ne, sql } from "drizzle-orm";
 import { CHAPTERS, CONJUGATION_UNITS, GRAMMAR_CONCEPTS } from "@/content";
+import { tenseName } from "@/lib/conjugation/labels";
+import { TENSES, type Tense } from "@/lib/conjugation/types";
 import type { Lang, Localized } from "@/lib/i18n/types";
 import { aiEnabled } from "../ai/provider";
 import { database, type DB } from "../db/client";
@@ -7,6 +9,7 @@ import { conceptProgress, exams, studySessions, vocabCards, vocabItems, vocabRev
 import { addDays, endOfLocalDay, localDate, now as clockNow } from "../engine/clock";
 import type { SessionPlan } from "../engine/planner";
 import { topWeaknesses } from "../engine/weaknesses";
+import { gradedMax } from "../exam/types";
 import { examOverview } from "./exam";
 import { getProfile } from "./profile";
 import { ensureTodaySession } from "./session";
@@ -106,7 +109,8 @@ export async function vocabularyData(lang: Lang, tzHint?: string | null) {
   const endOfDay = endOfLocalDay(today, profile.timezone);
   const cards = await db.select().from(vocabCards);
   const due = cards.filter((c) => c.state !== 0 && c.dueAt < endOfDay).length;
-  const learning = cards.filter((c) => c.state === 1 || c.state === 3).length;
+  // Words (not cards) with a direction still in learning steps, so it is comparable with "learned".
+  const learning = new Set(cards.filter((c) => c.state === 1 || c.state === 3).map((c) => c.itemId)).size;
   const items = new Set(cards.map((c) => c.itemId));
   const mature = new Set(cards.filter((c) => c.direction === "production" && c.stability >= 21).map((c) => c.itemId)).size;
   const monthAgo = new Date(now.getTime() - 30 * 86_400_000);
@@ -129,13 +133,15 @@ export async function vocabularyData(lang: Lang, tzHint?: string | null) {
     .map((r) => {
       const cs = cards.filter((c) => c.itemId === r.id);
       const prod = cs.find((c) => c.direction === "production") ?? cs[0]!;
-      const nextDue = cs.reduce((m, c) => (c.dueAt < m ? c.dueAt : m), cs[0]!.dueAt);
+      // A direction not yet introduced (state New) has no review scheduled.
+      const scheduled = cs.filter((c) => c.state !== 0);
+      const nextDue = scheduled.length ? scheduled.reduce((m, c) => (c.dueAt < m ? c.dueAt : m), scheduled[0]!.dueAt) : null;
       return {
         ...r,
         state: prod.state,
         stability: prod.stability,
         lapses: cs.reduce((s, c) => s + c.lapses, 0),
-        nextDue: nextDue.toISOString(),
+        nextDue: nextDue?.toISOString() ?? null,
         introducedOn: prod.introducedOn,
       };
     })
@@ -187,14 +193,21 @@ export async function progressData(lang: Lang, tzHint?: string | null) {
   const units = CONJUGATION_UNITS.map((u) => ({ id: u.id, title: u.title, status: byId.get(u.id)?.status ?? "locked", mastery: byId.get(u.id)?.mastery ?? 0 }));
 
   const weak = await topWeaknesses(db, now, undefined, 12, 1);
+  // Word weaknesses are keyed by item id (an accent-free slug): show the lemma itself.
+  const vocabIds = weak.filter((w) => w.kind === "vocab").map((w) => w.id);
+  const lemmas = new Map(
+    vocabIds.length ? (await db.select({ id: vocabItems.id, lemma: vocabItems.lemma }).from(vocabItems).where(inArray(vocabItems.id, vocabIds))).map((r) => [r.id, r.lemma]) : [],
+  );
   const weaknessLabels = weak.map((w) => ({
     ...w,
     label:
       w.kind === "concept"
         ? (title(w.id)?.[lang] ?? w.id)
         : w.kind === "vocab"
-          ? w.id.replace(/^v-/, "").replace(/-/g, " ")
-          : w.id,
+          ? (lemmas.get(w.id) ?? w.id.replace(/^v-/, "").replace(/-/g, " "))
+          : w.kind === "tense" && (TENSES as readonly string[]).includes(w.id)
+            ? tenseName(w.id as Tense)
+            : w.id,
   }));
 
   const [{ n: dueTomorrow }] = await db
@@ -212,7 +225,7 @@ export async function progressData(lang: Lang, tzHint?: string | null) {
     units,
     exams: examRows
       .filter((e) => e.status === "graded")
-      .map((e) => ({ id: e.id, weekOf: e.weekOf, number: e.number, kind: e.kind, score: e.score, sectionScores: e.sectionScores as Record<string, number | null> | null })),
+      .map((e) => ({ id: e.id, weekOf: e.weekOf, number: e.number, kind: e.kind, score: e.score, maxScore: gradedMax(e.sectionScores), sectionScores: e.sectionScores as Record<string, number | null> | null })),
     weaknesses: weaknessLabels,
     dueTomorrow: dueTomorrow ?? 0,
   };

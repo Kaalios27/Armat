@@ -71,7 +71,7 @@ All tables live in one Postgres schema. Key tables:
 
 ### Daily session (Monday to Saturday)
 
-Three fixed modules of 20 minutes, in order: vocabulary, conjugation, grammar. Each module tracks active time server-side (client heartbeats, pause on hide). When a module's time is used, the current item finishes and the next module begins with a one-line transition.
+Three fixed modules of 20 minutes, in order: vocabulary, conjugation, grammar. Each module tracks active time server-side (client heartbeats). The timer pauses when the page is hidden or after three minutes without input, and unattended time is not counted. When a module's time is used, the current item finishes and the next module begins with a one-line transition.
 
 Planning (`server/engine/planner.ts`) runs when the day's session is first requested:
 

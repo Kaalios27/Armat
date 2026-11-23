@@ -53,6 +53,7 @@ function conjugationPart(scope: ExamScope, rand: () => number): { items: ExamCon
     }),
   ];
   const seen = new Set<string>();
+  const perVerb = new Map<string, number>();
   const items: ExamConjItem[] = [];
   const key: ExamKey["conjugation"] = [];
   for (const [i, p] of plan.entries()) {
@@ -62,6 +63,8 @@ function conjugationPart(scope: ExamScope, rand: () => number): { items: ExamCon
       const tense: Tense = pick(unit.tenses, rand);
       const verb = p.verb && canDrill(p.verb, tense) && attempt < 4 ? p.verb : pick(unit.verbs.filter((v) => canDrill(v, tense)), rand);
       if (!verb) continue;
+      // Spread the part over the unit's verbs: at most two items per verb while alternatives remain.
+      if ((perVerb.get(verb) ?? 0) >= 2 && attempt < 10) continue;
       const r = rand();
       const type = r < 0.5 ? "direct" : r < 0.8 && CONTEXT_TENSES.includes(tense) ? "context" : "sentence";
       const { drill, key: k } = buildDrill({ verb, tense, type, rand });
@@ -69,6 +72,7 @@ function conjugationPart(scope: ExamScope, rand: () => number): { items: ExamCon
       const sig = `${drill.verb}|${drill.tense}|${drill.person}`;
       if (seen.has(sig)) continue;
       seen.add(sig);
+      perVerb.set(verb, (perVerb.get(verb) ?? 0) + 1);
       const id = `c${i + 1}`;
       items.push({
         id,
@@ -115,17 +119,24 @@ async function curatedGrammar(db: DB, conceptIds: string[], count: number, rand:
   return out;
 }
 
-function curatedTranslations(
-  words: ScopeWord[],
-  lang: Lang,
-  count: number,
-  rand: () => number,
-): Array<{ id: string; source: string; references: string[]; keyPoints: string[]; conceptIds: string[] }> {
-  const usable = shuffle(
+/**
+ * Splits the example sentences of the words in scope between dictation and translation, so that
+ * neither part gives away the other. At least five sentences are left for translation when possible.
+ */
+function splitExamples(words: ScopeWord[], lang: Lang, rand: () => number): { dictation: ScopeWord[]; translation: ScopeWord[] } {
+  const pool = shuffle(
     words.filter((w) => w.example && (lang === "en" ? w.exampleEn : w.exampleFr)),
     rand,
-  ).slice(0, count);
-  return usable.map((w, i) => ({
+  );
+  const dictationCount = Math.min(7, Math.max(3, pool.length - 5));
+  // Longer sentences make better dictation material.
+  const long = pool.filter((w) => w.example!.split(" ").length >= 5);
+  const dictation = [...long, ...pool.filter((w) => !long.includes(w))].slice(0, dictationCount);
+  return { dictation, translation: pool.filter((w) => !dictation.includes(w)) };
+}
+
+function curatedTranslations(words: ScopeWord[], lang: Lang, count: number): Array<{ id: string; source: string; references: string[]; keyPoints: string[]; conceptIds: string[] }> {
+  return words.slice(0, count).map((w, i) => ({
     id: `t${i + 1}`,
     source: (lang === "en" ? w.exampleEn : w.exampleFr)!,
     references: [w.example!],
@@ -134,14 +145,8 @@ function curatedTranslations(
   }));
 }
 
-function curatedDictation(words: ScopeWord[], rand: () => number): string {
-  const sentences = shuffle(
-    words.filter((w) => w.example && w.example.split(" ").length >= 5),
-    rand,
-  )
-    .slice(0, 7)
-    .map((w) => w.example!.trim());
-  return sentences.join(" ");
+function curatedDictation(words: ScopeWord[]): string {
+  return words.map((w) => w.example!.trim()).join(" ");
 }
 
 export async function generateExamContent(db: DB, examId: string, sunday: string, number: number, kind: "weekly" | "monthly", lang: Lang, startedOn: string | null, now: Date) {
@@ -189,9 +194,10 @@ export async function generateExamContent(db: DB, examId: string, sunday: string
 
   const sources: ExamContent["sources"] = { dictation: "curated", grammar: "curated", translation: "curated", writing: "curated" };
 
+  const examples = splitExamples(uniqueWords, lang, rand);
   let dictationText = dictationR.status === "fulfilled" ? dictationR.value : "";
   if (dictationText) sources.dictation = "ai";
-  else dictationText = curatedDictation(uniqueWords, rand) || "Esta mañana he llegado temprano a la oficina. Hemos tenido una reunión larga, pero al final hemos tomado una decisión importante.";
+  else dictationText = curatedDictation(examples.dictation) || "Esta mañana he llegado temprano a la oficina. Hemos tenido una reunión larga, pero al final hemos tomado una decisión importante.";
   const segments = segmentText(dictationText);
 
   let grammarItems = grammarR.status === "fulfilled" ? grammarR.value : [];
@@ -203,8 +209,10 @@ export async function generateExamContent(db: DB, examId: string, sunday: string
     sources.translation = "ai";
     translations = translationR.value.map((t, i) => ({ id: `t${i + 1}`, ...t }));
   } else {
-    translations = curatedTranslations(uniqueWords, lang, 5, rand);
+    // Sentences used in a curated dictation are excluded; an AI dictation leaves all of them free.
+    translations = curatedTranslations(sources.dictation === "ai" ? [...examples.translation, ...examples.dictation] : examples.translation, lang, 5);
     if (translations.length < 5) {
+      const inGrammarPart = new Set(grammarItems.map((g) => (g.data.type === "translate" ? g.data.prompt?.[lang] : null)).filter(Boolean));
       const seeded = await db
         .select()
         .from(exercises)
@@ -212,7 +220,7 @@ export async function generateExamContent(db: DB, examId: string, sunday: string
       for (const e of shuffle(seeded, rand)) {
         if (translations.length >= 5) break;
         const d = e.data as GrammarExerciseData;
-        if (!d.prompt) continue;
+        if (!d.prompt || inGrammarPart.has(d.prompt[lang])) continue;
         translations.push({ id: `t${translations.length + 1}`, source: d.prompt[lang], references: d.answers ?? [], keyPoints: [], conceptIds: [e.conceptId] });
       }
     }

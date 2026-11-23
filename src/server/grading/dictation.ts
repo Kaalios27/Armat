@@ -50,9 +50,14 @@ function subCost(ref: string, hyp: string): number {
   return PENALTY[t] * 0.6;
 }
 
+/** Dialogue dashes and quotation marks cannot be heard in a synthesized dictation: they are not graded. */
+function audible(s: string): string {
+  return nfc(s).replace(/[—–«»"“”]/g, " ");
+}
+
 export function gradeDictation(reference: string, answer: string, maxScore = 15): DictationResult {
-  const r = tokenize(nfc(reference));
-  const h = tokenize(nfc(answer));
+  const r = tokenize(audible(reference));
+  const h = tokenize(audible(answer));
   const n = r.length;
   const m = h.length;
   const gapCost = (tok: string) => (isPunctuation(tok) ? 0.3 : 1);

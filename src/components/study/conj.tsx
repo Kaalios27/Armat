@@ -19,6 +19,12 @@ interface ConjResult {
   overridden?: boolean;
 }
 
+/** Compact person labels for narrow tables (Ud. and Uds. are the standard abbreviations). */
+function tableLabel(p: Person, tense: Tense): string {
+  if (tense === "imper_aff" || tense === "imper_neg") return personLabel(p, tense);
+  return ["yo", "tú", "él, ella, Ud.", "nosotros", "vosotros", "ellos, ellas, Uds."][p]!;
+}
+
 export function ParadigmTable({ verb, tense, forms }: { verb: string; tense: Tense; forms: Array<string | null> }) {
   return (
     <div className="min-w-0">
@@ -31,7 +37,7 @@ export function ParadigmTable({ verb, tense, forms }: { verb: string; tense: Ten
           {forms.map((f, p) =>
             f === null ? null : (
               <tr key={p} className="border-t border-line">
-                <td className="w-[45%] py-1.5 pr-3 text-ink-3">{personLabel(p as Person, tense)}</td>
+                <td className="w-[52%] py-1.5 pr-3 text-[14px] text-ink-3">{tableLabel(p as Person, tense)}</td>
                 <td className="py-1.5 font-medium">{f}</td>
               </tr>
             ),

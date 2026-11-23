@@ -36,7 +36,7 @@ export default async function UnitPage({ params }: { params: Promise<{ unit: str
           {t("conjugation.title")}
         </Link>
         <div className="mt-2">
-          <PageTitle aside={progress ? `${t("conjugation.mastery")}: ${Math.round(progress.mastery * 100)}%` : undefined}>{unit.title[lang]}</PageTitle>
+          <PageTitle aside={progress ? `${t("conjugation.mastery")}${t("common.colon")}${Math.round(progress.mastery * 100)}%` : undefined}>{unit.title[lang]}</PageTitle>
         </div>
       </div>
       {!progress && <Note>{t("conjugation.notStarted")}</Note>}

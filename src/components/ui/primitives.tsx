@@ -95,7 +95,7 @@ export function Section({ title, aside, children, className }: { title?: ReactNo
 
 export function PageTitle({ children, aside }: { children: ReactNode; aside?: ReactNode }) {
   return (
-    <div className="mb-8 flex items-baseline justify-between gap-4">
+    <div className="flex items-baseline justify-between gap-4">
       <h1 className="text-[26px] font-semibold tracking-[-0.015em]">{children}</h1>
       {aside && <div className="text-[14px] text-ink-3">{aside}</div>}
     </div>

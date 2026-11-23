@@ -100,6 +100,12 @@ describe("weekly exam", () => {
     expect(JSON.stringify(e)).not.toContain('"answers"');
     const key = (await db.select().from(exams).where(eq(exams.id, examId)))[0]!.key as ExamKey;
     for (const item of e.content!.conjugation) expect(["c-pres-regular", "c-pres-irregular-core"]).toContain(key.conjugation.find((k) => k.id === item.id)!.unitId);
+    // The dictation must not give away the translation answers (curated sentences are split between the parts).
+    for (const t of key.translation) for (const ref of t.references) expect(key.dictation.text).not.toContain(ref);
+    // Items are spread over the verbs of the unit.
+    const perVerb = new Map<string, number>();
+    for (const k of key.conjugation) perVerb.set(k.verb, (perVerb.get(k.verb) ?? 0) + 1);
+    expect(Math.max(...perVerb.values())).toBeLessThanOrEqual(2);
   });
 
   it("autosaves answers and enforces dictation playback limits", async () => {

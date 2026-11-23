@@ -15,7 +15,7 @@ export default async function SettingsPage() {
   const cfg = aiConfig();
   const spend = await currentSpend(await database());
   return (
-    <div className="enter">
+    <div className="enter flex flex-col gap-10">
       <PageTitle>{t("settings.title")}</PageTitle>
       <SettingsForm
         uiLang={profile.uiLang}

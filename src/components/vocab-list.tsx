@@ -16,7 +16,7 @@ interface Word {
   state: number;
   stability: number;
   lapses: number;
-  nextDue: string;
+  nextDue: string | null;
 }
 
 export function WordList({ words }: { words: Word[] }) {
@@ -28,6 +28,7 @@ export function WordList({ words }: { words: Word[] }) {
     return words.filter((w) => stripAllDiacritics(`${w.lemma} ${w.main}`.toLowerCase()).includes(n));
   }, [q, words]);
   const status = (s: number) => (s === 0 ? t("vocab.statusNew") : s === 2 ? t("vocab.statusReview") : t("vocab.statusLearning"));
+  const when = (iso: string | null) => (!iso ? "–" : new Date(iso).getTime() <= Date.now() ? t("vocab.dueNow") : (relativeDue(iso, t) ?? "–"));
   return (
     <div className="flex flex-col gap-4">
       <TextInput value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("vocab.search")} className="sm:max-w-[320px]" aria-label={t("vocab.search")} />
@@ -51,7 +52,7 @@ export function WordList({ words }: { words: Word[] }) {
                 {w.falseFriend && <span className="ml-2 text-[12px] text-caution">{t("vocab.falseFriend")}</span>}
               </td>
               <td className={cn("hidden py-2 pr-4 sm:table-cell", w.lapses > 1 ? "text-caution" : "text-ink-2")}>{status(w.state)}</td>
-              <td className="hidden py-2 text-ink-3 sm:table-cell">{relativeDue(w.nextDue, t) ?? "–"}</td>
+              <td className="hidden py-2 text-ink-3 sm:table-cell">{when(w.nextDue)}</td>
             </tr>
           ))}
         </tbody>

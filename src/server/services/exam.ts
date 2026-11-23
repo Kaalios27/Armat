@@ -8,6 +8,7 @@ import { gradeExam, totalScore } from "../exam/grade";
 import {
   EXAM_MINUTES,
   EXAM_PARTS,
+  gradedMax,
   MAX_FULL_PLAYS,
   MAX_SEGMENT_PLAYS,
   type ExamContent,
@@ -28,6 +29,8 @@ export interface ExamSummary {
   kind: "weekly" | "monthly";
   status: string;
   score: number | null;
+  /** Maximum of the graded parts (below 100 while a part is pending). */
+  maxScore: number;
   late: boolean;
   canStart: boolean;
 }
@@ -42,6 +45,7 @@ function summarize(row: ExamRow | undefined, weekOf: string, startedOn: string, 
     kind: examKind(number),
     status: row?.status ?? (open ? "available" : today < weekOf ? "upcoming" : "missed"),
     score: row?.score ?? null,
+    maxScore: gradedMax(row?.sectionScores),
     late,
     canStart: open && (!row || ["generating", "ready", "in_progress", "failed"].includes(row.status)),
   };
@@ -223,6 +227,7 @@ export async function examResults(id: string) {
     status: e.status,
     error: e.error,
     score: e.score,
+    maxScore: gradedMax(e.sectionScores),
     content: e.content as ExamContent | null,
     responses: (e.responses ?? {}) as ExamResponses,
     grading: (e.grading ?? null) as ExamGrading | null,

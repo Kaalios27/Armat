@@ -166,7 +166,7 @@ export type NextResponse =
   | { type: "item"; item: PublicItem; module: ModuleKey; elapsedMs: number; moduleMs: number }
   | { type: "module-complete"; module: ModuleKey; nextModule: ModuleKey | null; sessionComplete: boolean }
   | { type: "exhausted"; module: ModuleKey; elapsedMs: number; moduleMs: number }
-  | { type: "wrong-module"; currentModule: ModuleKey | null };
+  | { type: "wrong-module"; currentModule: ModuleKey | null; elapsed: number[] };
 
 const NEXT: Record<ModuleKey, (ctx: ModuleContext) => Promise<NewItem | null>> = {
   vocab: nextVocab,
@@ -179,7 +179,8 @@ export async function nextItem(id: string, module: ModuleKey, clientElapsed: num
   if (!session) throw new HttpError(404, "Session not found");
   if (session.status === "planned") session = await startSession(id, tzHint);
   const current = session.status === "completed" ? null : (MODULES[session.currentModule] ?? null);
-  if (current !== module) return { type: "wrong-module", currentModule: current };
+  // The session moved on in another tab or on another device: tell the client where to resume.
+  if (current !== module) return { type: "wrong-module", currentModule: current, elapsed: (session.modules as ModuleState[]).map((m) => m.elapsedMs) };
 
   const { elapsed } = await saveElapsed(session, session.currentModule, clientElapsed);
   session = (await getSession(id))!;

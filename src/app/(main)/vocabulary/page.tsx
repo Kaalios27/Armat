@@ -22,7 +22,7 @@ export default async function VocabularyPage() {
         <Stat label={t("vocab.retention")} value={formatPercent(d.retention)} />
         <Stat label={t("vocab.newPerDay")} value={d.newPerSession} />
       </div>
-      <Section title={t("vocab.words")} aside={`${t("vocab.available")}: ${d.available}`}>
+      <Section title={t("vocab.words")} aside={`${t("vocab.available")}${t("common.colon")}${d.available}`}>
         {d.words.length ? <WordList words={d.words} /> : <p className="text-[15px] text-ink-2">{t("vocab.noWords")}</p>}
       </Section>
     </div>

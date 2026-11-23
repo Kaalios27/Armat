@@ -32,7 +32,7 @@ type NextResponse =
   | { type: "item"; item: Item; elapsedMs: number; moduleMs: number }
   | { type: "module-complete"; module: ModuleKey; nextModule: ModuleKey | null; sessionComplete: boolean }
   | { type: "exhausted"; elapsedMs: number }
-  | { type: "wrong-module"; currentModule: ModuleKey | null };
+  | { type: "wrong-module"; currentModule: ModuleKey | null; elapsed: number[] };
 
 export interface RunnerProps {
   sessionId: string;
@@ -73,6 +73,11 @@ async function post<T>(url: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** After this long without any input the timer pauses; idle time beyond the grace period is not counted. */
+const IDLE_PAUSE_MS = 3 * 60_000;
+const IDLE_GRACE_MS = 30_000;
+const INPUT_EVENTS = ["pointerdown", "keydown", "wheel", "touchstart", "scroll"] as const;
+
 export function StudyRunner({ sessionId, initialModule, initialElapsed, moduleMs, titles, aiEnabled }: RunnerProps) {
   const { t, lang } = useI18n();
   const router = useRouter();
@@ -91,15 +96,21 @@ export function StudyRunner({ sessionId, initialModule, initialElapsed, moduleMs
   // The stopwatch re-renders every 500 ms while running; read the value during render.
   const now = watch.get();
   const inFlight = useRef(false);
+  // Elapsed time per module as last reported by the server (page load or a resync).
+  const serverElapsed = useRef(initialElapsed);
+  // Stopwatch value at the last keyboard, pointer or scroll input. The time reported to the server never
+  // runs more than the grace period past it, so an unattended screen does not use up the module.
+  const lastInput = useRef(initialElapsed[initialModule] ?? 0);
+  const counted = useCallback(() => Math.round(Math.min(watch.get(), lastInput.current + IDLE_GRACE_MS)), [watch]);
 
   const beat = useCallback(
     (beacon = false) => {
-      const body = JSON.stringify({ module, elapsedMs: Math.round(watch.get()) });
+      const body = JSON.stringify({ module, elapsedMs: counted() });
       const url = `/api/session/${sessionId}/heartbeat`;
       if (beacon && navigator.sendBeacon) navigator.sendBeacon(url, body);
       else void fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true }).catch(() => {});
     },
-    [module, sessionId, watch],
+    [module, sessionId, counted],
   );
 
   // Heartbeat while studying; pause when the page is hidden.
@@ -108,6 +119,25 @@ export function StudyRunner({ sessionId, initialModule, initialElapsed, moduleMs
     const id = window.setInterval(() => beat(), 15_000);
     return () => window.clearInterval(id);
   }, [running, beat]);
+
+  // Pause after a stretch without input and roll the clock back to the last input plus the grace period.
+  useEffect(() => {
+    if (!running) return;
+    lastInput.current = watch.get();
+    const mark = () => {
+      lastInput.current = watch.get();
+    };
+    for (const e of INPUT_EVENTS) window.addEventListener(e, mark, { capture: true, passive: true });
+    const id = window.setInterval(() => {
+      if (watch.get() - lastInput.current < IDLE_PAUSE_MS) return;
+      watch.reset(lastInput.current + IDLE_GRACE_MS);
+      setPaused(true);
+    }, 5_000);
+    return () => {
+      window.clearInterval(id);
+      for (const e of INPUT_EVENTS) window.removeEventListener(e, mark, { capture: true });
+    };
+  }, [running, watch]);
   useEffect(() => {
     const onHide = () => {
       if (document.visibilityState === "hidden") {
@@ -130,7 +160,7 @@ export function StudyRunner({ sessionId, initialModule, initialElapsed, moduleMs
     setBusy(true);
     setError(false);
     try {
-      const res = await post<NextResponse>(`/api/session/${sessionId}/next`, { module, elapsedMs: Math.round(watch.get()) });
+      const res = await post<NextResponse>(`/api/session/${sessionId}/next`, { module, elapsedMs: counted() });
       if (res.type === "item") {
         setItem(res.item);
         setResult(res.item.status === "done" ? res.item.result : null);
@@ -141,15 +171,25 @@ export function StudyRunner({ sessionId, initialModule, initialElapsed, moduleMs
       } else if (res.type === "module-complete") {
         setItem(null);
         setExhausted(false);
-        setElapsedByModule((prev) => prev.map((v, i) => (i === moduleIndex ? watch.get() : v)));
+        setElapsedByModule((prev) => prev.map((v, i) => (i === moduleIndex ? counted() : v)));
         setPhase(res.sessionComplete ? "complete" : "transition");
       } else if (res.type === "wrong-module") {
+        // Another tab or device moved the session on: resume at the server's module with its elapsed time.
+        serverElapsed.current = res.elapsed;
+        setElapsedByModule(res.elapsed);
+        setItem(null);
+        setResult(null);
         if (res.currentModule === null) setPhase("complete");
         else {
           const idx = MODULES.indexOf(res.currentModule);
-          setModuleIndex(idx);
-          watch.reset(0);
-          setPhase("transition");
+          if (idx === 0) {
+            setModuleIndex(0);
+            watch.reset(res.elapsed[0] ?? 0);
+          } else {
+            // The transition screen names the module just finished and starts moduleIndex + 1.
+            setModuleIndex(idx - 1);
+            setPhase("transition");
+          }
         }
       }
     } catch {
@@ -158,7 +198,7 @@ export function StudyRunner({ sessionId, initialModule, initialElapsed, moduleMs
       inFlight.current = false;
       setBusy(false);
     }
-  }, [module, moduleIndex, sessionId, watch]);
+  }, [module, moduleIndex, sessionId, watch, counted]);
 
   useEffect(() => {
     if (phase === "running" && !item && !exhausted && !busy && !error) void fetchNext();
@@ -169,7 +209,7 @@ export function StudyRunner({ sessionId, initialModule, initialElapsed, moduleMs
     if (!item) return;
     setBusy(true);
     try {
-      const res = await post<{ result: Record<string, unknown> }>(`/api/session/${sessionId}/answer`, { itemId: item.id, elapsedMs: Math.round(watch.get()), ...body });
+      const res = await post<{ result: Record<string, unknown> }>(`/api/session/${sessionId}/answer`, { itemId: item.id, elapsedMs: counted(), ...body });
       if (then === "next") {
         setItem(null);
         setResult(null);
@@ -207,7 +247,7 @@ export function StudyRunner({ sessionId, initialModule, initialElapsed, moduleMs
   function startNextModule() {
     const idx = Math.min(moduleIndex + 1, MODULES.length - 1);
     setModuleIndex(idx);
-    watch.reset(initialElapsed[idx] && idx === initialModule ? initialElapsed[idx]! : 0);
+    watch.reset(serverElapsed.current[idx] ?? 0);
     setItem(null);
     setResult(null);
     setPhase("running");
@@ -220,6 +260,8 @@ export function StudyRunner({ sessionId, initialModule, initialElapsed, moduleMs
 
   const remaining = Math.max(0, moduleMs - now);
   const timeUp = now >= moduleMs;
+  // During the transition screen the header already points at the module that comes next.
+  const activeIndex = phase === "transition" ? Math.min(moduleIndex + 1, MODULES.length - 1) : moduleIndex;
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -232,11 +274,11 @@ export function StudyRunner({ sessionId, initialModule, initialElapsed, moduleMs
             {MODULES.map((m, i) => (
               <span
                 key={m}
-                aria-current={i === moduleIndex && phase !== "complete" ? "step" : undefined}
+                aria-current={i === activeIndex && phase !== "complete" ? "step" : undefined}
                 className={cn(
                   "whitespace-nowrap",
-                  i === moduleIndex && phase !== "complete" ? "font-medium text-ink" : i < moduleIndex || phase === "complete" ? "text-ink-3" : "text-ink-3",
-                  i !== moduleIndex && "hidden sm:inline",
+                  i === activeIndex && phase !== "complete" ? "font-medium text-ink" : "text-ink-3",
+                  i !== activeIndex && "hidden sm:inline",
                 )}
               >
                 {t(`modules.${m}`)}

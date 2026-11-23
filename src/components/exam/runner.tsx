@@ -62,6 +62,8 @@ export function ExamRunner({ initial }: { initial: ExamState }) {
   const [save, setSave] = useState<"saved" | "saving" | "local">("saved");
   const [confirm, setConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState(false);
   const base = useRef(initial.elapsedMs);
   const started = useRef<number | null>(null);
   const [, setTick] = useState(0);
@@ -193,8 +195,17 @@ export function ExamRunner({ initial }: { initial: ExamState }) {
   }, [content, responses]);
 
   async function start() {
-    const res = await fetch(`/api/exam/${exam.id}/start`, { method: "POST" });
-    if (res.ok) setExam((await res.json()) as ExamState);
+    setStarting(true);
+    setStartError(false);
+    try {
+      const res = await fetch(`/api/exam/${exam.id}/start`, { method: "POST" });
+      if (!res.ok) throw new Error();
+      setExam((await res.json()) as ExamState);
+    } catch {
+      setStartError(true);
+    } finally {
+      setStarting(false);
+    }
   }
 
   async function retry() {
@@ -239,10 +250,12 @@ export function ExamRunner({ initial }: { initial: ExamState }) {
           </tbody>
         </table>
         <p className="text-[15px] leading-relaxed text-ink-2">{t("exam.rules")}</p>
-        <div>
-          <Button size="lg" onClick={start}>
+        <div className="flex items-center gap-4">
+          <Button size="lg" onClick={start} disabled={starting}>
             {t("exam.startExam")}
           </Button>
+          {starting && <span className="text-[14px] text-ink-3">{t("common.loading")}</span>}
+          {startError && <span className="text-[14px] text-negative">{t("common.error")}</span>}
         </div>
       </div>
     );

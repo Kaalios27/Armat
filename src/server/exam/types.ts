@@ -8,6 +8,13 @@ export const EXAM_PARTS: ExamPartKey[] = ["dictation", "conjugation", "grammar",
 export const PART_POINTS: Record<ExamPartKey, number> = { dictation: 15, conjugation: 20, grammar: 20, translation: 15, writing: 30 };
 export const PART_MINUTES: Record<ExamPartKey, number> = { dictation: 10, conjugation: 10, grammar: 10, translation: 10, writing: 20 };
 export const EXAM_MINUTES = 60;
+
+/** Points actually graded: 100 unless a part is pending (for example writing without AI). */
+export function gradedMax(sectionScores: unknown): number {
+  const s = (sectionScores ?? null) as Partial<Record<ExamPartKey, number | null>> | null;
+  if (!s) return 100;
+  return EXAM_PARTS.reduce((sum, p) => sum + (s[p] === null ? 0 : PART_POINTS[p]), 0);
+}
 export const MAX_FULL_PLAYS = 2;
 export const MAX_SEGMENT_PLAYS = 3;
 

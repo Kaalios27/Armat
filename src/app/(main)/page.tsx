@@ -43,7 +43,7 @@ export default async function OverviewPage() {
         </div>
         {exam.status === "graded" && exam.id ? (
           <Link href={`/exam/${exam.id}/results`} className="tabular text-[17px] font-medium hover:underline">
-            {formatScore(exam.score)} / 100
+            {formatScore(exam.score)} / {exam.maxScore}
           </Link>
         ) : exam.canStart ? (
           <ExamStartButton weekOf={exam.weekOf} examId={exam.id} status={exam.status} label={exam.status === "in_progress" ? t("exam.continueExam") : t("exam.startExam")} />
@@ -56,7 +56,7 @@ export default async function OverviewPage() {
     <div className="enter flex flex-col gap-10">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-[26px] font-semibold tracking-[-0.015em]">{formatDate(d.today, lang)}</h1>
-        {d.stats.daysStudied > 0 && <span className="text-[14px] text-ink-3">{t("overview.daysStudied")}: {d.stats.daysStudied}</span>}
+        {d.stats.daysStudied > 0 && <span className="text-[14px] text-ink-3">{t("overview.daysStudied")}{t("common.colon")}{d.stats.daysStudied}</span>}
       </div>
 
       {d.dayKind === "exam" ? (
@@ -123,7 +123,7 @@ export default async function OverviewPage() {
 
       {d.dayKind !== "exam" && <Section title={t("overview.exam")}>{examLine()}</Section>}
 
-      <Section title={t("overview.level")}>
+      <Section title={t("nav.progress")}>
         <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
           <Stat label={t("overview.level")} value={d.level.label === "Pre-A1" ? t("overview.preA1") : t("overview.levelEstimate", { level: d.level.label })} />
           <Stat label={t("overview.wordsLearned")} value={d.stats.wordsLearned} />

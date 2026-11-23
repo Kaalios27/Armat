@@ -22,7 +22,7 @@ export default async function ProgressPage() {
     <div className="enter flex flex-col gap-10">
       <PageTitle>{t("progress.title")}</PageTitle>
 
-      <Section title={t("progress.consistency")} aside={`${t("progress.sessionsCompleted")}: ${d.sessionsCompleted}`}>
+      <Section title={t("progress.consistency")} aside={`${t("progress.sessionsCompleted")}${t("common.colon")}${d.sessionsCompleted}`}>
         <ConsistencyGrid days={d.days} today={d.today} />
       </Section>
 
@@ -46,7 +46,7 @@ export default async function ProgressPage() {
           <p className="text-[15px] text-ink-2">{t("exam.noHistory")}</p>
         ) : (
           <div className="flex flex-col gap-6">
-            {weekly.length >= 2 && <LineChart points={weekly.map((e) => ({ label: formatShortDate(e.weekOf, lang), value: e.score }))} max={100} format={(x) => String(Math.round(x))} />}
+            {weekly.length >= 2 && <LineChart points={weekly.map((e) => ({ label: formatShortDate(e.weekOf, lang), value: e.score === null ? null : (e.score / e.maxScore) * 100 }))} max={100} format={(x) => String(Math.round(x))} />}
             <table className="w-full text-[15px]">
               <thead>
                 <tr className="text-left text-[13px] text-ink-3">
@@ -72,7 +72,7 @@ export default async function ProgressPage() {
                         {formatScore(e.sectionScores?.[p] ?? null)}
                       </td>
                     ))}
-                    <td className="tabular py-2 text-right font-medium">{formatScore(e.score)}</td>
+                    <td className="tabular py-2 text-right font-medium">{formatScore(e.score)}{e.maxScore < 100 && <span className="text-ink-3"> / {e.maxScore}</span>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -91,7 +91,7 @@ export default async function ProgressPage() {
                 <Link href={`/exam/${e.id}/results`} className="hover:underline">
                   {t("overview.monthlyExam", { n: e.number })}, {formatShortDate(e.weekOf, lang)}
                 </Link>
-                <span className="tabular font-medium">{formatScore(e.score)}</span>
+                <span className="tabular font-medium">{formatScore(e.score)}{e.maxScore < 100 && <span className="text-ink-3"> / {e.maxScore}</span>}</span>
               </li>
             ))}
           </ul>
