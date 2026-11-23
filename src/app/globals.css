@@ -1,0 +1,165 @@
+@import "tailwindcss";
+
+/* Design tokens. Light is the primary identity; dark follows the system or the setting. */
+:root {
+  --bg: #faf9f7;
+  --surface: #ffffff;
+  --subtle: #f1f0ed;
+  --text: #1c1c1e;
+  --text-2: #5d5d63;
+  --text-3: #8c8c92;
+  --line: rgba(28, 28, 30, 0.1);
+  --line-strong: rgba(28, 28, 30, 0.2);
+  --accent: #2f5b9a;
+  --accent-soft: rgba(47, 91, 154, 0.1);
+  --positive: #2b7448;
+  --negative: #b03a2e;
+  --caution: #8a6212;
+  --button: #1c1c1e;
+  --button-text: #ffffff;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121212;
+    --surface: #1a1a1b;
+    --subtle: #232325;
+    --text: #ececee;
+    --text-2: #a3a3a9;
+    --text-3: #6f6f75;
+    --line: rgba(255, 255, 255, 0.09);
+    --line-strong: rgba(255, 255, 255, 0.18);
+    --accent: #86abe2;
+    --accent-soft: rgba(134, 171, 226, 0.14);
+    --positive: #6dc08c;
+    --negative: #e57c71;
+    --caution: #d5a54a;
+    --button: #ececee;
+    --button-text: #121212;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #121212;
+  --surface: #1a1a1b;
+  --subtle: #232325;
+  --text: #ececee;
+  --text-2: #a3a3a9;
+  --text-3: #6f6f75;
+  --line: rgba(255, 255, 255, 0.09);
+  --line-strong: rgba(255, 255, 255, 0.18);
+  --accent: #86abe2;
+  --accent-soft: rgba(134, 171, 226, 0.14);
+  --positive: #6dc08c;
+  --negative: #e57c71;
+  --caution: #d5a54a;
+  --button: #ececee;
+  --button-text: #121212;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-subtle: var(--subtle);
+  --color-ink: var(--text);
+  --color-ink-2: var(--text-2);
+  --color-ink-3: var(--text-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-positive: var(--positive);
+  --color-negative: var(--negative);
+  --color-caution: var(--caution);
+  --color-button: var(--button);
+  --color-button-text: var(--button-text);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+/* Element defaults live in the base layer so Tailwind utilities can override them. */
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    background: var(--bg);
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    min-height: 100dvh;
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  input,
+  textarea {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.enter {
+  animation: enter 160ms ease-out both;
+}
+
+.reveal {
+  animation: reveal 160ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
