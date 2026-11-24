@@ -45,6 +45,21 @@ async function compileWasm(file: string): Promise<WebAssembly.Module> {
   }
 }
 
+/**
+ * A background write can fail when PostgreSQL removes a temporary file while the write runs
+ * (Emscripten ErrnoError, ENOENT). PGlite keeps those changes for the next write, but the failed
+ * promise is not handled inside PGlite, so the browser would report it as an uncaught error.
+ */
+function ignoreBackgroundSyncErrors(): void {
+  const w = window as Window & { __armatSyncGuard?: boolean };
+  if (w.__armatSyncGuard) return;
+  w.__armatSyncGuard = true;
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason as { name?: string; errno?: number } | null;
+    if (reason?.name === "ErrnoError" && reason.errno === 44) event.preventDefault();
+  });
+}
+
 async function openBrowserDatabase(): Promise<DbState> {
   const [{ PGlite }, { drizzle }] = await Promise.all([import("@electric-sql/pglite"), import("drizzle-orm/pglite")]);
   const [pgliteWasmModule, initdbWasmModule, fsBundle] = await Promise.all([
@@ -52,7 +67,11 @@ async function openBrowserDatabase(): Promise<DbState> {
     compileWasm("initdb.wasm"),
     fetchAsset("pglite.data").then((r) => r.blob()),
   ]);
-  // Relaxed durability keeps answers fast; pending writes are flushed when the page is hidden.
+  // Relaxed durability: changes are written to IndexedDB in the background after each query, without
+  // forcing a disk sync each time (strict mode takes about a second per answer). PGlite keeps the changes
+  // of a failed background write and includes them in the next one; pending writes are also flushed when
+  // the page is hidden.
+  ignoreBackgroundSyncErrors();
   const client = await PGlite.create({ dataDir: DATA_DIR, relaxedDurability: true, pgliteWasmModule, initdbWasmModule, fsBundle });
   const db = drizzle({ client, schema }) as unknown as DB;
   await migrateDatabase(db);
@@ -78,7 +97,7 @@ export async function database(): Promise<DB> {
   return (await g.__armatDbOpening).db;
 }
 
-/** Write pending changes to IndexedDB now (before an export, a reset, or leaving the page). */
+/** Ask PGlite to write pending changes to IndexedDB now (before an export, a reset, or leaving the page). */
 export async function flushDatabase(): Promise<void> {
   await g.__armatDb?.client?.syncToFs();
 }
