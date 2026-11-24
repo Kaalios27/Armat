@@ -6,7 +6,9 @@ import { personLabel, tenseName } from "@/lib/conjugation/labels";
 import { formatClock } from "@/lib/format";
 import { loc } from "@/lib/i18n/types";
 import { wordCount } from "@/lib/text";
-import type { ExamContent, ExamPlayback, ExamResponses } from "@/server/exam/types";
+import { api } from "@/core/api";
+import type { ExamContent, ExamPlayback, ExamResponses } from "@/core/exam/types";
+import { useProfile } from "../app-provider";
 import { useI18n } from "../i18n";
 import { answerForSubmit, ExerciseInputs, hasAnswer, initialValue, type ExerciseValue } from "../study/grammar";
 import { AccentBar } from "../study/shared";
@@ -49,12 +51,13 @@ function writeLocal(id: string, responses: ExamResponses) {
   try {
     window.localStorage.setItem(localKey(id), JSON.stringify({ responses, savedAt: Date.now() }));
   } catch {
-    // Storage unavailable (private mode); the server copy remains.
+    // Storage unavailable (private mode); the database copy remains.
   }
 }
 
 export function ExamRunner({ initial }: { initial: ExamState }) {
   const { t, lang } = useI18n();
+  const { profile } = useProfile();
   const router = useRouter();
   const [exam, setExam] = useState(initial);
   const [responses, setResponses] = useState<ExamResponses>(() => initial.responses ?? {});
@@ -76,14 +79,17 @@ export function ExamRunner({ initial }: { initial: ExamState }) {
   useEffect(() => {
     if (exam.status !== "generating") return;
     const id = window.setInterval(async () => {
-      const res = await fetch(`/api/exam/${exam.id}`);
-      if (res.ok) setExam((await res.json()) as ExamState);
+      try {
+        setExam((await api.exam.get(exam.id)) as unknown as ExamState);
+      } catch {
+        // Try again on the next tick.
+      }
     }, 3000);
     return () => window.clearInterval(id);
   }, [exam.id, exam.status]);
 
   useEffect(() => {
-    if (exam.status === "submitted" || exam.status === "graded") router.replace(`/exam/${exam.id}/results`);
+    if (exam.status === "submitted" || exam.status === "graded") router.replace(`/exam/results?id=${exam.id}`);
   }, [exam.status, exam.id, router]);
 
   // Restore a newer local copy (e.g. after a lost connection).
@@ -110,23 +116,17 @@ export function ExamRunner({ initial }: { initial: ExamState }) {
   }, [running]);
 
   const persist = useCallback(
-    async (beacon = false) => {
-      const body = JSON.stringify({ responses, elapsedMs: Math.round(elapsed()) });
+    async (quiet = false) => {
+      // The local copy is written synchronously first: it survives even if the page closes mid-save.
       writeLocal(exam.id, responses);
-      if (beacon && navigator.sendBeacon) {
-        navigator.sendBeacon(`/api/exam/${exam.id}/save`, body);
-        return;
-      }
-      setSave("saving");
+      if (!quiet) setSave("saving");
       try {
-        const res = await fetch(`/api/exam/${exam.id}/save`, { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true });
-        if (!res.ok) throw new Error();
-        const json = (await res.json()) as { status: string };
+        const res = await api.exam.save(exam.id, responses, Math.round(elapsed()));
         dirty.current = false;
-        setSave("saved");
-        if (json.status === "submitted") router.replace(`/exam/${exam.id}/results`);
+        if (!quiet) setSave("saved");
+        if (res.status === "submitted") router.replace(`/exam/results?id=${exam.id}`);
       } catch {
-        setSave("local");
+        if (!quiet) setSave("local");
       }
     },
     [responses, exam.id, elapsed, router],
@@ -168,9 +168,8 @@ export function ExamRunner({ initial }: { initial: ExamState }) {
     setSubmitting(true);
     writeLocal(exam.id, responses);
     try {
-      const res = await fetch(`/api/exam/${exam.id}/submit`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ responses, elapsedMs: Math.round(elapsed()) }) });
-      if (!res.ok) throw new Error();
-      router.replace(`/exam/${exam.id}/results`);
+      await api.exam.submit(exam.id, responses, Math.round(elapsed()));
+      router.replace(`/exam/results?id=${exam.id}`);
     } catch {
       setSubmitting(false);
       setSave("local");
@@ -198,9 +197,7 @@ export function ExamRunner({ initial }: { initial: ExamState }) {
     setStarting(true);
     setStartError(false);
     try {
-      const res = await fetch(`/api/exam/${exam.id}/start`, { method: "POST" });
-      if (!res.ok) throw new Error();
-      setExam((await res.json()) as ExamState);
+      setExam((await api.exam.start(exam.id)) as unknown as ExamState);
     } catch {
       setStartError(true);
     } finally {
@@ -209,8 +206,12 @@ export function ExamRunner({ initial }: { initial: ExamState }) {
   }
 
   async function retry() {
-    const res = await fetch("/api/exam/ensure", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ weekOf: exam.weekOf }) });
-    if (res.ok) setExam({ ...exam, status: "generating" });
+    try {
+      await api.exam.ensure(exam.weekOf);
+      setExam((await api.exam.get(exam.id)) as unknown as ExamState);
+    } catch {
+      // The failure message stays on screen.
+    }
   }
 
   const title = exam.kind === "monthly" ? t("overview.monthlyExam", { n: exam.number }) : t("overview.weeklyExam", { n: exam.number });
@@ -311,8 +312,8 @@ export function ExamRunner({ initial }: { initial: ExamState }) {
             <Dictation
               examId={exam.id}
               segments={content.dictation.segments}
-              tts={content.dictation.tts}
               encoded={content.dictation.encoded}
+              voiceName={profile.dictationVoice}
               playback={exam.playback}
               onPlayback={(p) => setExam((e) => ({ ...e, playback: p }))}
               value={responses.dictation ?? ""}

@@ -1,18 +1,20 @@
+"use client";
+
 import Link from "next/link";
 import { ConsistencyGrid, LineChart } from "@/components/charts";
+import { PageError, PageLoading, useLoad } from "@/components/data";
+import { useI18n } from "@/components/i18n";
 import { Bar, PageTitle, Section, Stat } from "@/components/ui/primitives";
+import { progressData, vocabularyData } from "@/core/services/stats";
 import { formatScore, formatShortDate } from "@/lib/format";
-import { translator, type MessageKey } from "@/lib/i18n/messages";
-import { tzHint } from "@/server/http";
-import { getProfile } from "@/server/services/profile";
-import { progressData, vocabularyData } from "@/server/services/stats";
+import type { MessageKey } from "@/lib/i18n/messages";
 
-export default async function ProgressPage() {
-  const tz = await tzHint();
-  const profile = await getProfile(tz);
-  const lang = profile.uiLang;
-  const t = translator(lang);
-  const [d, v] = await Promise.all([progressData(lang, tz), vocabularyData(lang, tz)]);
+export default function ProgressPage() {
+  const { t, lang } = useI18n();
+  const { data, error, reload } = useLoad(() => Promise.all([progressData(lang), vocabularyData(lang)]), [lang]);
+  if (error) return <PageError onRetry={reload} />;
+  if (!data) return <PageLoading />;
+  const [d, v] = data;
   const weekly = d.exams.filter((e) => e.kind === "weekly");
   const monthly = d.exams.filter((e) => e.kind === "monthly");
   const retentionPoints = d.weeks.map((w) => ({ label: formatShortDate(w.week, lang), value: w.retention }));
@@ -63,7 +65,7 @@ export default async function ProgressPage() {
                 {weekly.map((e) => (
                   <tr key={e.id} className="border-t border-line">
                     <td className="py-2">
-                      <Link href={`/exam/${e.id}/results`} className="hover:underline">
+                      <Link href={`/exam/results?id=${e.id}`} className="hover:underline">
                         {formatShortDate(e.weekOf, lang)}
                       </Link>
                     </td>
@@ -88,7 +90,7 @@ export default async function ProgressPage() {
           <ul className="divide-y divide-line">
             {monthly.map((e) => (
               <li key={e.id} className="flex justify-between py-2 text-[15px]">
-                <Link href={`/exam/${e.id}/results`} className="hover:underline">
+                <Link href={`/exam/results?id=${e.id}`} className="hover:underline">
                   {t("overview.monthlyExam", { n: e.number })}, {formatShortDate(e.weekOf, lang)}
                 </Link>
                 <span className="tabular font-medium">{formatScore(e.score)}{e.maxScore < 100 && <span className="text-ink-3"> / {e.maxScore}</span>}</span>

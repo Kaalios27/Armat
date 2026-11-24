@@ -1,0 +1,229 @@
+/**
+ * Exam generation from the learner's history. Conjugation items come from the
+ * deterministic engine; dictation texts, grammar and translation items and the
+ * writing task come from the curated content, chosen by scope and level.
+ */
+import { and, desc, eq, inArray, ne } from "drizzle-orm";
+import { CONJUGATION_UNITS, GRAMMAR_CONCEPTS } from "@/content";
+import { getUnit } from "@/content/conjugation";
+import type { GrammarExerciseData } from "@/content/types";
+import { buildDrill, canDrill, CONTEXT_TENSES } from "@/lib/conjugation/drills";
+import type { Person, Tense } from "@/lib/conjugation/types";
+import type { Lang } from "@/lib/i18n/types";
+import { pick, seededRandom, shuffle, toBase64 } from "@/lib/text";
+import type { DB } from "../db/client";
+import { attempts, exams, exercises } from "../db/schema";
+import { DEFAULT_DICTATION, minWordsForLevel, pickDictation, pickWritingPrompt, segmentText } from "./fallback";
+import { allocate, computeScope, type ExamScope, type ScopeWord } from "./scope";
+import type { ExamConjItem, ExamContent, ExamGrammarItem, ExamKey } from "./types";
+
+function cycle<T>(items: T[], n: number, rand: () => number): T[] {
+  if (!items.length || n <= 0) return [];
+  const out: T[] = [];
+  let pool = shuffle(items, rand);
+  while (out.length < n) {
+    if (!pool.length) pool = shuffle(items, rand);
+    out.push(pool.shift()!);
+  }
+  return out;
+}
+
+function conjugationPart(scope: ExamScope, rand: () => number): { items: ExamConjItem[]; key: ExamKey["conjugation"] } {
+  const introduced = [...scope.units.recent, ...scope.units.older];
+  const units = introduced.length ? introduced : [CONJUGATION_UNITS[0]!.id];
+  const alloc = allocate(20, scope.kind, {
+    recent: scope.units.recent.length,
+    older: scope.units.older.length,
+    weak: scope.weakVerbs.length,
+  });
+  const plan: Array<{ unitId: string; verb?: string }> = [
+    ...cycle(scope.units.recent.length ? scope.units.recent : units, alloc.recent, rand).map((u) => ({ unitId: u })),
+    ...cycle(scope.units.older.length ? scope.units.older : units, alloc.older, rand).map((u) => ({ unitId: u })),
+    ...cycle(scope.weakVerbs, alloc.weak, rand).map((verb) => {
+      const unit = units.find((u) => getUnit(u)?.verbs.includes(verb)) ?? pick(units, rand);
+      return { unitId: unit, verb };
+    }),
+  ];
+  const seen = new Set<string>();
+  const perVerb = new Map<string, number>();
+  const items: ExamConjItem[] = [];
+  const key: ExamKey["conjugation"] = [];
+  for (const [i, p] of plan.entries()) {
+    const unit = getUnit(p.unitId) ?? CONJUGATION_UNITS[0]!;
+    let made = false;
+    for (let attempt = 0; attempt < 12 && !made; attempt++) {
+      const tense: Tense = pick(unit.tenses, rand);
+      const verb = p.verb && canDrill(p.verb, tense) && attempt < 4 ? p.verb : pick(unit.verbs.filter((v) => canDrill(v, tense)), rand);
+      if (!verb) continue;
+      // Spread the part over the unit's verbs: at most two items per verb while alternatives remain.
+      if ((perVerb.get(verb) ?? 0) >= 2 && attempt < 10) continue;
+      const r = rand();
+      const type = r < 0.5 ? "direct" : r < 0.8 && CONTEXT_TENSES.includes(tense) ? "context" : "sentence";
+      const { drill, key: k } = buildDrill({ verb, tense, type, rand });
+      if (drill.type === "table" || drill.person === null) continue;
+      const sig = `${drill.verb}|${drill.tense}|${drill.person}`;
+      if (seen.has(sig)) continue;
+      seen.add(sig);
+      perVerb.set(verb, (perVerb.get(verb) ?? 0) + 1);
+      const id = `c${i + 1}`;
+      items.push({
+        id,
+        type: drill.type === "context" ? "context" : drill.type === "sentence" || drill.type === "error" ? "sentence" : "direct",
+        verb: drill.verb,
+        translation: drill.translation,
+        tense: drill.type === "context" ? null : drill.tense,
+        person: drill.person,
+        subject: drill.subject,
+        before: drill.type === "error" ? drill.before : drill.before,
+        after: drill.after,
+      });
+      key.push({ id, verb: drill.verb, tense: drill.tense, person: drill.person as Person, answers: k.answers, alternatives: k.alternatives, unitId: unit.id });
+      made = true;
+    }
+  }
+  return { items, key };
+}
+
+async function curatedGrammar(db: DB, conceptIds: string[], count: number, rand: () => number): Promise<Array<{ conceptId: string; data: GrammarExerciseData }>> {
+  const ids = conceptIds.length ? conceptIds : [GRAMMAR_CONCEPTS[0]!.id];
+  const pool = await db
+    .select()
+    .from(exercises)
+    .where(and(inArray(exercises.conceptId, ids), eq(exercises.retired, false), ne(exercises.type, "write")));
+  const tried = await db
+    .select({ id: attempts.exerciseId, at: attempts.createdAt })
+    .from(attempts)
+    .where(inArray(attempts.conceptId, ids))
+    .orderBy(desc(attempts.createdAt));
+  const lastSeen = new Map<string, number>();
+  for (const t of tried) if (t.id && !lastSeen.has(t.id)) lastSeen.set(t.id, t.at.getTime());
+  const ordered = shuffle(pool, rand).sort((a, b) => (lastSeen.get(a.id) ?? 0) - (lastSeen.get(b.id) ?? 0));
+  // Spread items across concepts.
+  const byConcept = new Map<string, typeof pool>();
+  for (const e of ordered) byConcept.set(e.conceptId, [...(byConcept.get(e.conceptId) ?? []), e]);
+  const out: Array<{ conceptId: string; data: GrammarExerciseData }> = [];
+  while (out.length < count && [...byConcept.values()].some((l) => l.length)) {
+    for (const list of byConcept.values()) {
+      const e = list.shift();
+      if (e && out.length < count) out.push({ conceptId: e.conceptId, data: e.data as GrammarExerciseData });
+    }
+  }
+  return out;
+}
+
+/**
+ * Splits the example sentences of the words in scope between dictation and translation, so that
+ * neither part gives away the other. At least five sentences are left for translation when possible.
+ */
+function splitExamples(words: ScopeWord[], lang: Lang, rand: () => number): { dictation: ScopeWord[]; translation: ScopeWord[] } {
+  const pool = shuffle(
+    words.filter((w) => w.example && (lang === "en" ? w.exampleEn : w.exampleFr)),
+    rand,
+  );
+  const dictationCount = Math.min(7, Math.max(3, pool.length - 5));
+  // Longer sentences make better dictation material.
+  const long = pool.filter((w) => w.example!.split(" ").length >= 5);
+  const dictation = [...long, ...pool.filter((w) => !long.includes(w))].slice(0, dictationCount);
+  return { dictation, translation: pool.filter((w) => !dictation.includes(w)) };
+}
+
+function curatedTranslations(words: ScopeWord[], lang: Lang, count: number): Array<{ id: string; source: string; references: string[]; keyPoints: string[]; conceptIds: string[] }> {
+  return words.slice(0, count).map((w, i) => ({
+    id: `t${i + 1}`,
+    source: (lang === "en" ? w.exampleEn : w.exampleFr)!,
+    references: [w.example!],
+    keyPoints: [w.lemma],
+    conceptIds: [],
+  }));
+}
+
+function curatedDictation(words: ScopeWord[]): string {
+  return words.map((w) => w.example!.trim()).join(" ");
+}
+
+export async function generateExamContent(db: DB, examId: string, sunday: string, number: number, kind: "weekly" | "monthly", lang: Lang, startedOn: string | null, now: Date) {
+  const scope = await computeScope(db, sunday, kind, startedOn, now);
+  const rand = seededRandom(`exam:${examId}`);
+  const conj = conjugationPart(scope, rand);
+  const allWords = [...scope.words.recent, ...scope.words.weak, ...scope.words.older];
+  const uniqueWords = allWords.filter((w, i) => allWords.findIndex((x) => x.id === w.id) === i);
+
+  // Grammar allocation by concept
+  const gAlloc = allocate(10, kind, { recent: scope.concepts.recent.length, older: scope.concepts.older.length, weak: scope.concepts.weak.length });
+  const pickConcepts = [
+    ...cycle(scope.concepts.recent, gAlloc.recent, rand),
+    ...cycle(scope.concepts.older, gAlloc.older, rand),
+    ...cycle(scope.concepts.weak, gAlloc.weak, rand),
+  ];
+  const conceptIds = pickConcepts.length ? pickConcepts : [GRAMMAR_CONCEPTS[0]!.id];
+  const counts = new Map<string, number>();
+  for (const id of conceptIds) counts.set(id, (counts.get(id) ?? 0) + 1);
+
+  const level = scope.level;
+  const minWords = minWordsForLevel(level);
+  // Recent exams: avoid repeating a dictation text or a writing prompt.
+  const previous = await db.select({ key: exams.key }).from(exams).orderBy(desc(exams.weekOf)).limit(6);
+  const usedDictations = new Set(previous.map((p) => (p.key as ExamKey | null)?.dictation.id).filter((x): x is string => !!x));
+  const usedPrompts = new Set(previous.map((p) => (p.key as ExamKey | null)?.writing.promptId).filter((x): x is string => !!x));
+
+  // Part 1: a curated dictation text for the learner's level, or sentences from the words in scope.
+  const examples = splitExamples(uniqueWords, lang, rand);
+  const dictation = pickDictation(level, usedDictations, rand);
+  const dictationText = dictation?.text ?? (curatedDictation(examples.dictation) || DEFAULT_DICTATION);
+  const segments = segmentText(dictationText);
+
+  // Part 3: curated exercises from the concepts in scope.
+  const grammarItems = await curatedGrammar(db, [...counts.keys()], 10, rand);
+
+  // Part 4: example sentences of the words in scope, then curated translation exercises.
+  // Sentences read in a word-based dictation are kept out so the dictation does not give answers away.
+  const translations = curatedTranslations(dictation ? [...examples.translation, ...examples.dictation] : examples.translation, lang, 5);
+  if (translations.length < 5) {
+    const inGrammarPart = new Set(grammarItems.map((g) => (g.data.type === "translate" ? g.data.prompt?.[lang] : null)).filter(Boolean));
+    const pool = [...counts.keys(), ...scope.concepts.older];
+    const seeded = await db
+      .select()
+      .from(exercises)
+      .where(and(eq(exercises.type, "translate"), inArray(exercises.conceptId, pool.length ? pool : [GRAMMAR_CONCEPTS[0]!.id])));
+    for (const e of shuffle(seeded, rand)) {
+      if (translations.length >= 5) break;
+      const d = e.data as GrammarExerciseData;
+      if (!d.prompt || inGrammarPart.has(d.prompt[lang])) continue;
+      translations.push({ id: `t${translations.length + 1}`, source: d.prompt[lang], references: d.answers ?? [], keyPoints: [], conceptIds: [e.conceptId] });
+    }
+  }
+
+  // Part 5: a curated writing prompt for the level, with a model answer for the self-assessment.
+  const writing = pickWritingPrompt(level, usedPrompts, number, lang);
+
+  const grammarPublic: ExamGrammarItem[] = grammarItems.map((g, i) => ({
+    id: `g${i + 1}`,
+    type: g.data.type,
+    instruction: g.data.type === "translate" || g.data.type === "write" ? (g.data.prompt ?? null) : (g.data.hint ?? null),
+    es: g.data.es ?? null,
+    options: g.data.options ? shuffle(g.data.options, rand) : null,
+    tokens: g.data.tokens ? shuffle(g.data.tokens, rand) : null,
+    blanks: g.data.type === "fill" || g.data.type === "distinguish" ? (g.data.blanks ?? []).length : 0,
+  }));
+
+  const content: ExamContent = {
+    version: 1,
+    kind,
+    number,
+    lang,
+    // Encoded so the text is not readable at a glance while the device's voice reads it.
+    dictation: { segments: segments.length, encoded: segments.map(toBase64) },
+    conjugation: conj.items,
+    grammar: grammarPublic,
+    translation: translations.map((t) => ({ id: t.id, source: t.source })),
+    writing: { prompt: writing.prompt, minWords, guidance: writing.guidance },
+  };
+  const key: ExamKey = {
+    dictation: { id: dictation?.id ?? null, text: dictationText, segments },
+    conjugation: conj.key,
+    grammar: grammarItems.map((g, i) => ({ id: `g${i + 1}`, conceptId: g.conceptId, data: g.data })),
+    translation: translations.map((t) => ({ id: t.id, references: t.references, keyPoints: t.keyPoints, conceptIds: t.conceptIds })),
+    writing: { conceptIds: [...counts.keys()], level, promptId: writing.id, model: writing.model },
+  };
+  return { content, key, scope };
+}

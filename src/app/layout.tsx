@@ -1,19 +1,19 @@
 import type { Metadata, Viewport } from "next";
 import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
-import { cookies } from "next/headers";
-import { I18nProvider } from "@/components/i18n";
-import { TimezoneSync } from "@/components/timezone-sync";
-import type { Lang } from "@/lib/i18n/types";
-import { getProfile } from "@/server/services/profile";
+import Script from "next/script";
+import { AppProvider } from "@/components/app-provider";
 import "./globals.css";
 
-export const dynamic = "force-dynamic";
+const base = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
 export const metadata: Metadata = {
   title: "Armat",
-  description: "Personal study system for European Spanish.",
+  description: "Personal study system for European Spanish. Runs in your browser; your progress stays on your device.",
   robots: { index: false, follow: false },
+  manifest: `${base}/manifest.webmanifest`,
+  appleWebApp: { capable: true, title: "Armat", statusBarStyle: "default" },
+  icons: { apple: `${base}/apple-touch-icon.png` },
 };
 
 export const viewport: Viewport = {
@@ -26,21 +26,17 @@ export const viewport: Viewport = {
   ],
 };
 
-export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  let lang: Lang = "en";
-  let theme: "system" | "light" | "dark" = "system";
-  try {
-    const profile = await getProfile((await cookies()).get("tz")?.value);
-    lang = profile.uiLang;
-    theme = profile.theme;
-  } catch {
-    // Database unavailable (e.g. misconfiguration): render with defaults.
-  }
+// Applies the saved theme and language before the first paint (the database opens after).
+const preferences = `try{var t=localStorage.getItem("armat:theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t;var l=localStorage.getItem("armat:lang");if(l==="en"||l==="fr")document.documentElement.lang=l}catch(e){}`;
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang={lang} data-theme={theme === "system" ? undefined : theme} className={`${GeistSans.variable} ${GeistMono.variable}`} suppressHydrationWarning>
+    <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`} suppressHydrationWarning>
       <body>
-        <TimezoneSync />
-        <I18nProvider lang={lang}>{children}</I18nProvider>
+        <Script id="armat-preferences" strategy="beforeInteractive">
+          {preferences}
+        </Script>
+        <AppProvider>{children}</AppProvider>
       </body>
     </html>
   );

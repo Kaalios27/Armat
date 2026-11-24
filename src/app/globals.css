@@ -155,6 +155,20 @@
   animation: reveal 160ms ease-out both;
 }
 
+/* Loading indicator while the local database opens. */
+@keyframes boot {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+.boot-bar {
+  animation: boot 1.1s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

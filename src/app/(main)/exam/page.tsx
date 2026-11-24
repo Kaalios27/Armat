@@ -1,19 +1,19 @@
-import Link from "next/link";
-import { ExamStartButton } from "@/components/exam/exam-start";
-import { Note, PageTitle, Section, Tag } from "@/components/ui/primitives";
-import { formatDate, formatScore } from "@/lib/format";
-import { translator } from "@/lib/i18n/messages";
-import { PART_MINUTES, PART_POINTS, EXAM_PARTS } from "@/server/exam/types";
-import { tzHint } from "@/server/http";
-import { examOverview } from "@/server/services/exam";
-import { getProfile } from "@/server/services/profile";
+"use client";
 
-export default async function ExamOverviewPage() {
-  const tz = await tzHint();
-  const profile = await getProfile(tz);
-  const lang = profile.uiLang;
-  const t = translator(lang);
-  const o = await examOverview(tz);
+import Link from "next/link";
+import { PageError, PageLoading, useLoad } from "@/components/data";
+import { ExamStartButton } from "@/components/exam/exam-start";
+import { useI18n } from "@/components/i18n";
+import { Note, PageTitle, Section, Tag } from "@/components/ui/primitives";
+import { EXAM_PARTS, PART_MINUTES, PART_POINTS } from "@/core/exam/types";
+import { examOverview } from "@/core/services/exam";
+import { formatDate, formatScore } from "@/lib/format";
+
+export default function ExamOverviewPage() {
+  const { t, lang } = useI18n();
+  const { data: o, error, reload } = useLoad(() => examOverview(), []);
+  if (error) return <PageError onRetry={reload} />;
+  if (!o) return <PageLoading />;
   const name = (kind: string, n: number) => (kind === "monthly" ? t("overview.monthlyExam", { n }) : t("overview.weeklyExam", { n }));
 
   return (
@@ -31,11 +31,11 @@ export default async function ExamOverviewPage() {
                 {o.current.kind === "monthly" && <p className="mt-1 text-[14px] text-ink-2">{t("exam.monthlyNote")}</p>}
               </div>
               {o.current.status === "graded" && o.current.id ? (
-                <Link href={`/exam/${o.current.id}/results`} className="tabular text-[17px] font-medium hover:underline">
+                <Link href={`/exam/results?id=${o.current.id}`} className="tabular text-[17px] font-medium hover:underline">
                   {formatScore(o.current.score)} / {o.current.maxScore}
                 </Link>
               ) : o.current.status === "submitted" && o.current.id ? (
-                <Link href={`/exam/${o.current.id}/results`} className="text-[15px] text-ink-2 hover:text-ink">
+                <Link href={`/exam/results?id=${o.current.id}`} className="text-[15px] text-ink-2 hover:text-ink">
                   {t("exam.grading")}
                 </Link>
               ) : o.current.canStart ? (
@@ -87,7 +87,7 @@ export default async function ExamOverviewPage() {
           <ul className="divide-y divide-line">
             {o.history.map((h) => (
               <li key={h.id}>
-                <Link href={`/exam/${h.id}/results`} className="grid grid-cols-[1fr_auto] items-center gap-4 py-3 hover:bg-subtle/60 sm:grid-cols-[200px_1fr_auto]">
+                <Link href={`/exam/results?id=${h.id}`} className="grid grid-cols-[1fr_auto] items-center gap-4 py-3 hover:bg-subtle/60 sm:grid-cols-[200px_1fr_auto]">
                   <span className="text-[15px]">{formatDate(h.weekOf, lang, { day: "numeric", month: "long", year: "numeric" })}</span>
                   <span className="hidden text-[15px] text-ink-2 sm:block">{name(h.kind, h.number)}</span>
                   <span className="tabular text-[15px] font-medium">{h.status === "graded" ? `${formatScore(h.score)} / ${h.maxScore}` : t("exam.grading")}</span>

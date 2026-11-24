@@ -1,28 +1,18 @@
 import type { NextConfig } from "next";
 
+// A static site: everything runs in the browser, so it can be hosted on GitHub Pages.
+// GitHub Pages serves the site under /<repository>/: the Pages workflow sets PAGES_BASE_PATH.
+const basePath = process.env.PAGES_BASE_PATH ?? "";
+
 const nextConfig: NextConfig = {
+  output: "export",
+  basePath,
+  trailingSlash: true,
+  images: { unoptimized: true },
+  env: { NEXT_PUBLIC_BASE_PATH: basePath },
   poweredByHeader: false,
-  // PGlite ships a WASM build of Postgres; load it from node_modules at runtime instead of bundling it.
-  serverExternalPackages: ["@electric-sql/pglite"],
-  // Migrations are applied at runtime on first database access, so the SQL files must ship with the functions.
-  outputFileTracingIncludes: {
-    "/**": ["./drizzle/**/*"],
-  },
   turbopack: {
     root: process.cwd(),
-  },
-  async headers() {
-    return [
-      {
-        source: "/(.*)",
-        headers: [
-          { key: "X-Frame-Options", value: "DENY" },
-          { key: "X-Content-Type-Options", value: "nosniff" },
-          { key: "Referrer-Policy", value: "same-origin" },
-          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
-        ],
-      },
-    ];
   },
 };
 

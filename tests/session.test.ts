@@ -1,11 +1,11 @@
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConjKey } from "@/lib/conjugation/drills";
-import { closeDatabase, type DB } from "@/server/db/client";
-import { conceptProgress, exercises, sessionItems, studySessions, vocabCards } from "@/server/db/schema";
-import { setClock } from "@/server/engine/clock";
-import type { SessionPlan } from "@/server/engine/planner";
-import { answerItem, completeModule, ensureTodaySession, nextItem, type NextResponse } from "@/server/services/session";
+import { closeDatabase, type DB } from "@/core/db/client";
+import { conceptProgress, exercises, sessionItems, studySessions, vocabCards } from "@/core/db/schema";
+import { setClock } from "@/core/engine/clock";
+import type { SessionPlan } from "@/core/engine/planner";
+import { answerItem, completeModule, ensureTodaySession, nextItem, type NextResponse } from "@/core/services/session";
 import { useTestDb } from "./support/db";
 
 let db: DB;

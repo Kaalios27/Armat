@@ -7,7 +7,10 @@ out/
 next-env.d.ts
 *.tsbuildinfo
 
-# local data (PGlite development database, backups)
+# PGlite WebAssembly files copied from node_modules at build time
+public/pglite/
+
+# local data from earlier server versions
 .data/
 backups/
 
@@ -27,9 +30,6 @@ Thumbs.db
 # editors
 .vscode/
 .idea/
-
-# vercel
-.vercel
 
 # local tooling
 .claude/

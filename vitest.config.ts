@@ -4,9 +4,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   resolve: {
     alias: {
-      "@": path.resolve(process.cwd(), "src"),
-      // `server-only` throws outside the React Server Components bundler; tests run plain Node.
-      "server-only": path.resolve(process.cwd(), "tests/support/server-only.ts"),
+      "@": path.resolve(process.cwd(), "src")
     },
   },
   test: {

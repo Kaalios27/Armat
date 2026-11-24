@@ -1,16 +1,17 @@
+"use client";
+
+import { PageError, PageLoading, useLoad } from "@/components/data";
+import { useI18n } from "@/components/i18n";
 import { PageTitle, Section, Stat } from "@/components/ui/primitives";
 import { WordList } from "@/components/vocab-list";
+import { vocabularyData } from "@/core/services/stats";
 import { formatPercent } from "@/lib/format";
-import { translator } from "@/lib/i18n/messages";
-import { tzHint } from "@/server/http";
-import { getProfile } from "@/server/services/profile";
-import { vocabularyData } from "@/server/services/stats";
 
-export default async function VocabularyPage() {
-  const tz = await tzHint();
-  const profile = await getProfile(tz);
-  const t = translator(profile.uiLang);
-  const d = await vocabularyData(profile.uiLang, tz);
+export default function VocabularyPage() {
+  const { t, lang } = useI18n();
+  const { data: d, error, reload } = useLoad(() => vocabularyData(lang), [lang]);
+  if (error) return <PageError onRetry={reload} />;
+  if (!d) return <PageLoading />;
   return (
     <div className="enter flex flex-col gap-10">
       <PageTitle>{t("vocab.title")}</PageTitle>

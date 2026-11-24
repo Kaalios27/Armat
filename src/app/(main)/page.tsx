@@ -1,19 +1,19 @@
-import Link from "next/link";
-import { ExamStartButton } from "@/components/exam/exam-start";
-import { ButtonLink, Note, Section, Stat, Tag } from "@/components/ui/primitives";
-import { daysBetween, formatDate, formatScore } from "@/lib/format";
-import { translator } from "@/lib/i18n/messages";
-import { loc } from "@/lib/i18n/types";
-import { tzHint } from "@/server/http";
-import { getProfile } from "@/server/services/profile";
-import { overviewData } from "@/server/services/stats";
+"use client";
 
-export default async function OverviewPage() {
-  const tz = await tzHint();
-  const profile = await getProfile(tz);
-  const lang = profile.uiLang;
-  const t = translator(lang);
-  const d = await overviewData(tz);
+import Link from "next/link";
+import { PageError, PageLoading, useLoad } from "@/components/data";
+import { ExamStartButton } from "@/components/exam/exam-start";
+import { useI18n } from "@/components/i18n";
+import { ButtonLink, Note, Section, Stat, Tag } from "@/components/ui/primitives";
+import { overviewData } from "@/core/services/stats";
+import { daysBetween, formatDate, formatScore } from "@/lib/format";
+import { loc } from "@/lib/i18n/types";
+
+export default function OverviewPage() {
+  const { t, lang } = useI18n();
+  const { data: d, error, reload } = useLoad(() => overviewData(), [lang]);
+  if (error) return <PageError onRetry={reload} />;
+  if (!d) return <PageLoading />;
   const s = d.session;
   const plan = s?.plan;
   const exam = d.exam.current;
@@ -42,7 +42,7 @@ export default async function OverviewPage() {
           </div>
         </div>
         {exam.status === "graded" && exam.id ? (
-          <Link href={`/exam/${exam.id}/results`} className="tabular text-[17px] font-medium hover:underline">
+          <Link href={`/exam/results?id=${exam.id}`} className="tabular text-[17px] font-medium hover:underline">
             {formatScore(exam.score)} / {exam.maxScore}
           </Link>
         ) : exam.canStart ? (
@@ -132,11 +132,6 @@ export default async function OverviewPage() {
         </div>
       </Section>
 
-      {!d.ai && (
-        <div className="border-t border-line pt-5">
-          <Note>{t("overview.aiOff")}</Note>
-        </div>
-      )}
     </div>
   );
 }

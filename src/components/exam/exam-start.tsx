@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { api } from "@/core/api";
 import { useI18n } from "../i18n";
 import { Button } from "../ui/primitives";
 
@@ -28,12 +29,8 @@ export function ExamStartButton({
     setError(false);
     try {
       let id = examId;
-      if (!id || status === "failed") {
-        const res = await fetch("/api/exam/ensure", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ weekOf }) });
-        if (!res.ok) throw new Error();
-        id = ((await res.json()) as { id: string }).id;
-      }
-      router.push(`/exam/${id}`);
+      if (!id || status === "failed" || status === "generating") id = (await api.exam.ensure(weekOf)).id;
+      router.push(`/exam/take?id=${id}`);
     } catch {
       setError(true);
       setBusy(false);

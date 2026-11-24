@@ -205,7 +205,6 @@ export function GrammarExerciseView({
   conceptTitle,
   result,
   busy,
-  aiEnabled,
   onSubmit,
   onContinue,
   onOverride,
@@ -214,7 +213,6 @@ export function GrammarExerciseView({
   conceptTitle: Localized;
   result: GrammarResult | null;
   busy: boolean;
-  aiEnabled: boolean;
   onSubmit: (body: { answer: ExerciseValue; responseMs: number }) => void;
   onContinue: () => void;
   onOverride: (answer: ExerciseValue) => void;
@@ -222,33 +220,12 @@ export function GrammarExerciseView({
   const { t, lang } = useI18n();
   const shownAt = useRef(Date.now());
   const [value, setValue] = useState<ExerciseValue>(() => initialValue(ex));
-  const [explaining, setExplaining] = useState(false);
-  const [more, setMore] = useState<string | null>(null);
 
   const submit = (e?: React.FormEvent) => {
     e?.preventDefault();
     if (busy || result || !hasAnswer(ex, value)) return;
     onSubmit({ answer: answerForSubmit(ex, value), responseMs: Date.now() - shownAt.current });
   };
-
-  async function explain() {
-    if (!result) return;
-    setExplaining(true);
-    try {
-      const context = [
-        ex.prompt ? `Prompt: ${ex.prompt[lang]}` : "",
-        ex.es ? `Spanish: ${ex.es}` : "",
-        `Learner answer: ${JSON.stringify(answerForSubmit(ex, value))}`,
-        `Expected: ${result.expected}`,
-        `Rule: ${result.explanation[lang]}`,
-      ].join("\n");
-      const res = await fetch("/api/explain", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ context }) });
-      const json = (await res.json()) as { explanation?: string };
-      setMore(json.explanation ?? null);
-    } finally {
-      setExplaining(false);
-    }
-  }
 
   const label = (() => {
     if (result?.unverified && !result.correct) return t("study.categories.unverified");
@@ -282,18 +259,9 @@ export function GrammarExerciseView({
           expected={!result.correct || result.category === "alternative" || result.category === "style" ? result.correction || result.expected : null}
           onContinue={onContinue}
           onOverride={result.correct ? null : () => onOverride(answerForSubmit(ex, value))}
-          extra={
-            !result.correct && aiEnabled && !more ? (
-              <Button variant="ghost" onClick={explain} disabled={explaining}>
-                {explaining ? t("study.explaining") : t("study.explainMore")}
-              </Button>
-            ) : null
-          }
         >
-          {result.aiExplanation && <p>{result.aiExplanation}</p>}
           <p>{loc(result.explanation, lang)}</p>
           {result.unverified && !result.correct && <p className="text-[14px] text-ink-3">{t("study.unverified")}</p>}
-          {more && <p className="text-ink">{more}</p>}
         </Feedback>
       )}
     </div>

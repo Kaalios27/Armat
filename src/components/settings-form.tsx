@@ -1,9 +1,12 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { api } from "@/core/api";
+import type { ProfilePatch } from "@/core/services/profile";
+import { useProfile } from "./app-provider";
 import { useI18n } from "./i18n";
 import { Button, cn } from "./ui/primitives";
+import { spanishVoice, spanishVoices } from "./voices";
 
 function Segmented<T extends string>({ value, options, onChange, label }: { value: T; options: Array<{ value: T; label: string }>; onChange: (v: T) => void; label: string }) {
   return (
@@ -34,67 +37,110 @@ function Row({ title, note, children }: { title: string; note?: ReactNode; child
         <div className="text-[15px] font-medium">{title}</div>
         {note && <div className="mt-1 text-[13px] leading-relaxed text-ink-3">{note}</div>}
       </div>
-      <div className="flex flex-col items-start gap-2">{children}</div>
+      <div className="flex min-w-0 flex-col items-start gap-2">{children}</div>
     </div>
   );
 }
 
-export interface SettingsProps {
-  uiLang: "en" | "fr";
-  theme: "system" | "light" | "dark";
-  timezoneSetting: string;
-  timezone: string;
-  pace: "steady" | "standard" | "intensive";
-  newWordsTarget: number;
-  dictationVoice: "auto" | "browser" | "server";
-  ttsServer: string;
-  ai: { provider: string | null; model: string | null; configured: { anthropic: boolean; openai: boolean }; spendDay: number; spendMonth: number; dailyBudget: number; monthlyBudget: number; perMinute: number };
-  database: "postgres" | "pglite";
-  authEnabled: boolean;
+const ZONES = ["Europe/Madrid", "Europe/Paris", "Europe/London", "Europe/Brussels", "Europe/Zurich", "Europe/Lisbon", "Atlantic/Canary", "America/New_York", "America/Montreal", "UTC"];
+const selectClass = "h-11 max-w-full rounded-lg border border-line-strong bg-surface px-3 text-[15px] outline-none focus:border-accent";
+
+function download(name: string, text: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-const ZONES = ["Europe/Madrid", "Europe/Paris", "Europe/London", "Europe/Brussels", "Europe/Zurich", "Europe/Lisbon", "Atlantic/Canary", "America/New_York", "America/Montreal", "UTC"];
-
-export function SettingsForm(p: SettingsProps) {
+export function SettingsForm() {
   const { t } = useI18n();
-  const router = useRouter();
-  const [state, setState] = useState(p);
-  const [test, setTest] = useState<string | null>(null);
-  const [testing, setTesting] = useState(false);
+  const { profile, refresh } = useProfile();
+  const [voices, setVoices] = useState<string[]>([]);
+  const [storage, setStorage] = useState<{ mb: number | null; persisted: boolean | null }>({ mb: null, persisted: null });
+  const [confirm, setConfirm] = useState<null | { kind: "import"; data: unknown } | { kind: "reset" }>(null);
+  const [message, setMessage] = useState<{ text: string; tone: "ok" | "error" } | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
 
-  async function save(patch: Partial<SettingsProps>) {
-    setState((s) => ({ ...s, ...patch }));
-    await fetch("/api/settings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(patch) });
-    router.refresh();
+  useEffect(() => {
+    const load = () => setVoices(spanishVoices().map((v) => v.name));
+    load();
+    window.speechSynthesis?.addEventListener?.("voiceschanged", load);
+    void (async () => {
+      const estimate = await navigator.storage?.estimate?.().catch(() => null);
+      const persisted = await navigator.storage?.persisted?.().catch(() => null);
+      setStorage({ mb: estimate?.usage ? Math.round((estimate.usage / 1048576) * 10) / 10 : null, persisted: persisted ?? null });
+    })();
+    return () => window.speechSynthesis?.removeEventListener?.("voiceschanged", load);
+  }, []);
+
+  async function save(patch: ProfilePatch) {
+    await api.updateProfile(patch);
+    await refresh();
   }
 
-  async function testConnection() {
-    setTesting(true);
-    setTest(null);
+  function testVoice() {
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(t("settings.voiceSample"));
+    const v = spanishVoice(profile.dictationVoice);
+    if (v) u.voice = v;
+    u.lang = v?.lang ?? "es-ES";
+    u.rate = 0.92;
+    window.speechSynthesis.speak(u);
+  }
+
+  async function exportData() {
+    const data = await api.data.exportAll();
+    download(`armat-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data));
+  }
+
+  async function chooseFile(file: File | undefined) {
+    if (!file) return;
+    setMessage(null);
     try {
-      const res = await fetch("/api/ai/test", { method: "POST" });
-      const json = (await res.json()) as { ok?: boolean; error?: string; reason?: string };
-      setTest(res.ok && json.ok ? t("settings.testOk") : t("settings.testFailed", { reason: json.reason ?? json.error ?? String(res.status) }));
-    } catch (e) {
-      setTest(t("settings.testFailed", { reason: String(e) }));
-    } finally {
-      setTesting(false);
+      setConfirm({ kind: "import", data: JSON.parse(await file.text()) });
+    } catch {
+      setMessage({ text: t("settings.importFailed", { reason: "JSON" }), tone: "error" });
+    }
+    if (fileInput.current) fileInput.current.value = "";
+  }
+
+  async function confirmAction() {
+    if (!confirm) return;
+    try {
+      if (confirm.kind === "import") {
+        await api.data.importAll(confirm.data);
+        setMessage({ text: t("settings.importDone"), tone: "ok" });
+      } else {
+        await api.data.resetProgress();
+        setMessage({ text: t("settings.resetDone"), tone: "ok" });
+      }
+      setConfirm(null);
+      await refresh();
+    } catch (err) {
+      setConfirm(null);
+      setMessage({ text: t("settings.importFailed", { reason: err instanceof Error ? err.message : String(err) }), tone: "error" });
     }
   }
 
-  async function signOut() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    window.location.assign("/login");
-  }
-
-  const usd = (n: number) => `$${n.toFixed(2)}`;
+  const deviceZone = (() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone;
+    } catch {
+      return profile.timezone;
+    }
+  })();
 
   return (
     <div className="flex flex-col">
       <Row title={t("settings.language")} note={t("settings.languageNote")}>
         <Segmented
           label={t("settings.language")}
-          value={state.uiLang}
+          value={profile.uiLang}
           options={[
             { value: "en", label: "English" },
             { value: "fr", label: "Français" },
@@ -105,7 +151,7 @@ export function SettingsForm(p: SettingsProps) {
       <Row title={t("settings.theme")}>
         <Segmented
           label={t("settings.theme")}
-          value={state.theme}
+          value={profile.theme}
           options={[
             { value: "system", label: t("settings.themes.system") },
             { value: "light", label: t("settings.themes.light") },
@@ -115,12 +161,8 @@ export function SettingsForm(p: SettingsProps) {
         />
       </Row>
       <Row title={t("settings.timezone")}>
-        <select
-          value={state.timezoneSetting}
-          onChange={(e) => save({ timezoneSetting: e.target.value, ...({ timezone: e.target.value } as Partial<SettingsProps>) })}
-          className="h-11 rounded-lg border border-line-strong bg-surface px-3 text-[15px] outline-none focus:border-accent"
-        >
-          <option value="auto">{t("settings.timezoneAuto", { tz: p.timezone })}</option>
+        <select value={profile.timezoneSetting} onChange={(e) => save({ timezone: e.target.value })} className={selectClass} aria-label={t("settings.timezone")}>
+          <option value="auto">{t("settings.timezoneAuto", { tz: deviceZone })}</option>
           {ZONES.map((z) => (
             <option key={z} value={z}>
               {z}
@@ -128,10 +170,10 @@ export function SettingsForm(p: SettingsProps) {
           ))}
         </select>
       </Row>
-      <Row title={t("settings.pace")} note={t("settings.paceNote", { n: state.newWordsTarget })}>
+      <Row title={t("settings.pace")} note={t("settings.paceNote", { n: profile.newWordsTarget })}>
         <Segmented
           label={t("settings.pace")}
-          value={state.pace}
+          value={profile.pace}
           options={[
             { value: "steady", label: t("settings.paces.steady") },
             { value: "standard", label: t("settings.paces.standard") },
@@ -140,60 +182,60 @@ export function SettingsForm(p: SettingsProps) {
           onChange={(v) => save({ pace: v })}
         />
       </Row>
-      <Row title={t("settings.voice")} note={t("settings.voiceStatus", { status: p.ttsServer === "browser" ? t("settings.notConfigured") : p.ttsServer })}>
-        <Segmented
-          label={t("settings.voice")}
-          value={state.dictationVoice}
-          options={[
-            { value: "auto", label: t("settings.voices.auto") },
-            { value: "browser", label: t("settings.voices.browser") },
-            { value: "server", label: t("settings.voices.server") },
-          ]}
-          onChange={(v) => save({ dictationVoice: v })}
-        />
-      </Row>
-      <Row title={t("settings.ai")}>
-        <dl className="grid w-full max-w-[460px] grid-cols-[1fr_auto] gap-x-6 gap-y-1.5 text-[14px]">
-          <dt className="text-ink-2">{t("settings.provider")}</dt>
-          <dd>{p.ai.provider ? `${p.ai.provider === "anthropic" ? "Anthropic" : "OpenAI"}` : t("settings.notConfigured")}</dd>
-          <dt className="text-ink-2">{t("settings.model")}</dt>
-          <dd className="font-mono text-[13px]">{p.ai.model ?? "–"}</dd>
-          <dt className="text-ink-2">{t("settings.spendToday")}</dt>
-          <dd className="tabular">
-            {usd(p.ai.spendDay)} / {usd(p.ai.dailyBudget)}
-          </dd>
-          <dt className="text-ink-2">{t("settings.spendMonth")}</dt>
-          <dd className="tabular">
-            {usd(p.ai.spendMonth)} / {usd(p.ai.monthlyBudget)}
-          </dd>
-          <dt className="text-ink-2">{t("settings.limits")}</dt>
-          <dd className="tabular">{p.ai.perMinute} / min</dd>
-        </dl>
-        {p.ai.provider && (
-          <div className="mt-2 flex flex-wrap items-center gap-3">
-            <Button variant="secondary" size="sm" onClick={testConnection} disabled={testing}>
-              {t("settings.testConnection")}
+      <Row title={t("settings.voice")} note={t("settings.voiceNote")}>
+        {voices.length ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <select value={voices.includes(profile.dictationVoice) ? profile.dictationVoice : "auto"} onChange={(e) => save({ dictationVoice: e.target.value })} className={selectClass} aria-label={t("settings.voice")}>
+              <option value="auto">{t("settings.voiceAuto")}</option>
+              {voices.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+            <Button variant="secondary" size="sm" onClick={testVoice}>
+              {t("settings.voiceTest")}
             </Button>
-            {test && <span className="text-[14px] text-ink-2">{test}</span>}
+          </div>
+        ) : (
+          <span className="text-[15px] text-caution">{t("settings.voiceNone")}</span>
+        )}
+      </Row>
+      <Row title={t("settings.data")} note={t("settings.dataNote")}>
+        {confirm ? (
+          <div className="flex flex-col gap-3">
+            <p className="text-[15px] text-ink">{confirm.kind === "import" ? t("settings.importConfirm") : t("settings.resetConfirm")}</p>
+            <div className="flex flex-wrap gap-3">
+              <Button variant="primary" size="sm" onClick={confirmAction}>
+                {confirm.kind === "import" ? t("settings.replace") : t("settings.erase")}
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => setConfirm(null)}>
+                {t("common.cancel")}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-3">
+            <Button variant="secondary" size="sm" onClick={exportData}>
+              {t("settings.export")}
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => fileInput.current?.click()}>
+              {t("settings.import")}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setConfirm({ kind: "reset" })}>
+              {t("settings.reset")}
+            </Button>
+            <input ref={fileInput} type="file" accept="application/json,.json" className="hidden" onChange={(e) => void chooseFile(e.target.files?.[0])} />
           </div>
         )}
+        {message && <p className={cn("text-[14px]", message.tone === "ok" ? "text-positive" : "text-negative")}>{message.text}</p>}
       </Row>
-      <Row title={t("settings.data")}>
-        <a href="/api/export" className="text-[15px] text-accent hover:underline">
-          {t("settings.export")}
-        </a>
+      <Row title={t("settings.storage")} note={t("settings.storageApple")}>
+        <span className="text-[15px] text-ink-2">{t("settings.storageLocal", { mb: storage.mb ?? "–" })}</span>
+        {storage.persisted !== null && <span className="text-[14px] text-ink-3">{storage.persisted ? t("settings.storagePersisted") : t("settings.storageNotPersisted")}</span>}
       </Row>
-      <Row title={t("settings.storage")}>
-        <span className="text-[15px] text-ink-2">{p.database === "postgres" ? t("settings.databasePostgres") : t("settings.databaseLocal")}</span>
-      </Row>
-      <Row title={t("settings.account")}>
-        {p.authEnabled ? (
-          <Button variant="secondary" size="sm" onClick={signOut}>
-            {t("common.signOut")}
-          </Button>
-        ) : (
-          <span className="text-[14px] text-ink-3">{t("settings.accessOpen")}</span>
-        )}
+      <Row title={t("settings.content")}>
+        <span className="text-[14px] leading-relaxed text-ink-3">{t("settings.contentNote")}</span>
       </Row>
     </div>
   );

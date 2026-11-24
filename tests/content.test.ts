@@ -3,9 +3,9 @@ import { afterAll, describe, expect, it } from "vitest";
 import { CONJUGATION_UNITS, GRAMMAR_CONCEPTS, GRAMMAR_EXERCISES, GRAMMAR_LESSONS, VOCAB_SEED } from "@/content";
 import { canDrill } from "@/lib/conjugation/drills";
 import { cognateScore, lemmaKey, looseKey } from "@/lib/lemma";
-import { closeDatabase } from "@/server/db/client";
-import { concepts, exercises, lessons, vocabItems, vocabTranslations } from "@/server/db/schema";
-import { seedDatabase } from "@/server/db/seed";
+import { closeDatabase } from "@/core/db/client";
+import { concepts, exercises, lessons, vocabItems, vocabTranslations } from "@/core/db/schema";
+import { seedDatabase } from "@/core/db/seed";
 import { useTestDb } from "./support/db";
 
 describe("curated content", () => {

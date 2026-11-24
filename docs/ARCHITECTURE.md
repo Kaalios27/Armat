@@ -1,97 +1,97 @@
 # Architecture
 
-Armat is a single-learner Spanish (Castilian) study system. The learner opens the app, presses Start, and works. The system decides what is studied, schedules revision, and adapts to results. This document describes how that is built.
+Armat is a single-learner Spanish (Castilian) study system. The learner opens the site, presses Start, and works. The system decides what is studied, schedules revision, and adapts to results. Everything runs in the browser: the site is a set of static files on GitHub Pages, and the learner's data lives in a PostgreSQL database compiled to WebAssembly, stored on the device.
 
 ## Principles
 
-1. **The database is the source of truth.** Every answer, review, session and exam is persisted. The language model never "remembers" anything; it is given the facts it needs for each task.
-2. **Deterministic engine, AI content.** Scheduling, spaced repetition, prerequisites, mastery thresholds, timing, duplicate prevention and straightforward grading are plain TypeScript with tests. The model writes content (exercises, explanations, exam texts) and grades open-ended answers.
-3. **Degrade, never break.** If the AI provider is unconfigured, over budget, or failing, sessions continue on curated seed content and deterministic grading. Open-ended exam sections that genuinely need a model are marked as pending rather than faked.
+1. **The database is the source of truth.** Every answer, review, session and exam is persisted in the learner's local database. Nothing is kept only in memory.
+2. **Deterministic engine, curated content.** Scheduling, spaced repetition, prerequisites, mastery thresholds, timing, duplicate prevention and grading are plain TypeScript with tests. Lessons, exercises, example sentences, dictation texts and model answers were written with AI assistance ahead of time and ship with the site; no AI service is called at run time, so there is no key to protect and nothing to pay.
+3. **Private by construction.** There is no server and no account. Progress never leaves the device unless the learner exports it.
 4. **Language-independent learning state.** Spanish items (words, verbs, concepts) have stable IDs. English and French translations are stored separately. Switching the instruction language never touches progress.
 
 ## Stack
 
 | Layer | Choice | Why |
 |---|---|---|
-| Framework | Next.js 16 (App Router), React 19, TypeScript | Server components for data pages, route handlers for the session API, one deployable unit |
+| Framework | Next.js 16 (App Router) with static export, React 19, TypeScript | One static site; client components for every page |
 | Styling | Tailwind CSS 4 with CSS variables | Token-driven design system, light and dark themes |
-| Fonts | Geist Sans, Geist Mono (`geist` package, self-hosted) | Required typeface; no runtime font fetch |
-| Database | PostgreSQL via Drizzle ORM | Supabase/Neon in production; PGlite (Postgres compiled to WASM) for local development and tests, so tests exercise a real Postgres engine |
+| Fonts | Geist Sans and Geist Mono (`geist` package, self-hosted) | No runtime font fetch |
+| Database | PGlite (PostgreSQL compiled to WebAssembly) in the browser, stored in IndexedDB; Drizzle ORM | Real SQL, transactions and constraints on the device; the same engine runs the tests in Node |
 | Spaced repetition | `ts-fsrs` (FSRS-7) | Current, well-established scheduler |
-| AI | `@anthropic-ai/sdk` (default model `claude-opus-5-5`), OpenAI REST as an alternative provider | Structured outputs validated with Zod |
-| TTS | Azure Speech or Google Cloud TTS (es-ES neural voices), browser `speechSynthesis` fallback | European Spanish dictation |
-| Hosting | Vercel (connected to the GitHub repository) | GitHub Pages cannot run server code, so it cannot hold API keys |
+| Dictation audio | Web Speech API (`speechSynthesis`) with the device's Spanish voices | Free, offline, good es-ES voices on Apple, Windows and Android |
+| Hosting | GitHub Pages, deployed by GitHub Actions | Free hosting for a static site |
 
 ## Source layout
 
 ```
 src/
-  app/                 Next.js routes (pages and API route handlers)
+  app/                 Next.js routes (static pages; dynamic units and concepts are pre-rendered)
     (main)/            pages with the top navigation
     (focus)/           study session and exam: no navigation
-    api/               JSON endpoints used by client components
-  components/          UI primitives and feature components (client and server)
-  lib/                 code shared by client and server
-    conjugation/       deterministic Spanish conjugator, drills, error diagnosis
-    i18n/              English and French interface strings
-    text.ts            normalisation, accent handling, edit distance
-  server/
-    db/                schema, connection (Postgres or PGlite), migrations, seeding
+  components/          UI primitives and feature components; app-provider.tsx opens the database
+  content/             curated curriculum: vocabulary, verbs, grammar lessons and exercises, exam texts
+  core/                the application, running in the browser
+    api.ts             actions called by the interface (sessions, exams, settings, data)
+    db/                schema, PGlite client, bundled migrations, seed
     engine/            scheduling and learner model (FSRS, mastery, planning, weekly calendar, level)
     grading/           deterministic grading (vocabulary, grammar, dictation)
-    ai/                provider abstraction, budget guard, cache, task prompts and schemas
     exam/              exam scope, generation, grading
-    services/          session runner, modules, progress, settings, export
-    tts/               server-side speech synthesis
-  content/             curated seed curriculum (vocabulary, verbs, grammar, conjugation lessons)
-scripts/               migrate, seed, backup, restore
+    services/          session runner, modules, progress, settings, export and import
+  lib/                 conjugator, text utilities, i18n (English and French)
+scripts/               copy PGlite's WebAssembly files, bundle migrations, render icons
 tests/                 Vitest suites (unit and PGlite integration)
-drizzle/               generated SQL migrations (committed)
+drizzle/               SQL migrations generated by drizzle-kit (committed)
 ```
 
 ## Data model
 
 All tables live in one Postgres schema. Key tables:
 
-- `profile` (single row): interface language, time zone, theme, pace, adaptive new-word target, program start date.
+- `profile` (single row): interface language, time zone, theme, pace, adaptive new-word target, dictation voice, program start date.
 - `concepts`: the curriculum. Grammar concepts and conjugation units share one table (`kind`), with order, CEFR band, localized titles and objectives, prerequisites.
-- `lessons`: one row per (concept, language). Seeded or AI-generated, validated, then stable.
-- `exercises`: grammar exercise bank. Seeded exercises are bilingual; AI exercises are tagged with their instruction language. A content hash prevents duplicates.
-- `vocab_items` + `vocab_translations` (one row per language) + `vocab_aliases`: the lexicon. `lemma_key` is a unique normalized key; aliases cover alternative spellings and gendered forms. New items are checked against keys, aliases and inflected forms before insertion.
-- `vocab_cards`: one FSRS card per (item, direction): recognition (Spanish to instruction language) and production (instruction language to Spanish). Full FSRS state is kept in JSON with queryable columns (`due_at`, `state`, `stability`, `reps`, `lapses`).
+- `lessons`: one row per (concept, language).
+- `exercises`: grammar exercise bank, bilingual. A content hash prevents duplicates.
+- `vocab_items` + `vocab_translations` (one row per language) + `vocab_aliases`: the lexicon. `lemma_key` is a unique normalized key; aliases cover alternative spellings and gendered forms.
+- `vocab_cards`: one FSRS card per (item, direction): recognition and production. Full FSRS state is kept in JSON with queryable columns (`due_at`, `state`, `stability`, `reps`, `lapses`).
 - `vocab_reviews`: every flashcard answer with rating, format, response time, error type.
 - `concept_progress`: per concept mastery (EWMA accuracy, attempts, focus days, status) plus an FSRS card used to schedule concept revision.
 - `attempts`: every conjugation, grammar and exam item answer with the error category and grader.
-- `study_sessions` + `session_items`: the daily plan, module timers, and every served item (so a refresh resumes on the same item). Answer keys are stored server-side and only revealed after answering.
-- `exams`: weekly and monthly exams with content, server-only answer key, autosaved responses, playback counters, grading report.
+- `study_sessions` + `session_items`: the daily plan, module timers, and every served item (so a reload resumes on the same item). A partial unique index allows one pending item per session.
+- `exams`: weekly and monthly exams with content, answer key, autosaved responses, playback counters, grading report.
 - `weaknesses`: decaying weights per concept, verb, tense, error category and word. Fed by sessions and exams, read by the planner.
-- `ai_usage`, `ai_cache`, `tts_cache`: spend tracking, response cache, synthesized audio.
+
+## Running in the browser
+
+- `components/app-provider.tsx` wraps every page. It takes a Web Lock so only one tab uses the database (two tabs writing the same IndexedDB database would overwrite each other), opens PGlite, applies the bundled migrations and the seed, asks the browser for persistent storage, then loads the profile for the language and theme.
+- PGlite's WebAssembly files (about 15 MB, cached by the browser) are copied from `node_modules` into `public/pglite` at build time and passed to PGlite explicitly, so loading does not depend on the bundler.
+- Writes use relaxed durability for responsiveness and are flushed to IndexedDB when the page is hidden or closed, and after an export, an import or a reset.
+- `core/api.ts` replaces the HTTP routes of a server application: the interface calls these functions directly, with the same validation, and receives plain JSON data.
+- Migrations are generated by drizzle-kit and bundled into `core/db/migrations.ts` by `scripts/gen-migrations.mjs`; a test checks that the bundle matches the SQL files. The seed is idempotent and versioned, so content updates in new releases are applied on the next visit without touching learner data.
 
 ## Learning engine
 
 ### Daily session (Monday to Saturday)
 
-Three fixed modules of 20 minutes, in order: vocabulary, conjugation, grammar. Each module tracks active time server-side (client heartbeats). The timer pauses when the page is hidden or after three minutes without input, and unattended time is not counted. When a module's time is used, the current item finishes and the next module begins with a one-line transition.
+Three fixed modules of 20 minutes, in order: vocabulary, conjugation, grammar. Each module records its active time. The timer pauses when the page is hidden or after three minutes without input, and unattended time is not counted. When a module's time is used, the current item finishes and the next module begins with a one-line transition.
 
-Planning (`server/engine/planner.ts`) runs when the day's session is first requested:
+Planning (`core/engine/planner.ts`) runs when the day's session is first opened:
 
 1. Load profile, card statistics, concept progress and weaknesses.
 2. Vocabulary: count due reviews, adapt today's new-word count to the review load, select new words with a weighted score (frequency, usefulness, difficulty for the instruction language, false-friend and discourse-marker bonuses, cognate penalty), pick weak words for the recall segment.
 3. Conjugation: continue the current unit, or introduce the next one once mastery is demonstrated. Choose revision units (due by FSRS, weak, or least mastered).
-4. Grammar: same rule for concepts; one new concept per day when the previous one is sufficiently mastered, with a cap on focus days so progress never stalls.
-5. Save the plan. Background prefetch generates AI exercises for the day's focus concept when the bank is thin.
+4. Grammar: same rule for concepts; one new concept per day when the previous one is sufficiently mastered and its lesson exists, with a cap on focus days so progress never stalls.
 
-Within each module, items are chosen on demand (`next` endpoint) from the plan, elapsed time and live state:
+Within each module, items are chosen on demand from the plan, elapsed time and live state:
 
-- **Vocabulary**: due reviews first (about 5 minutes, extended when there is a backlog), then new words in batches of three (introduce, then test), then active recall: first production tests of today's words, difficult words and AI context sentences. FSRS learning steps (1 and 10 minutes) bring failed words back within the module.
-- **Conjugation**: lesson or recap, focus-unit drills, mixed revision across earlier units. Drills are generated by the deterministic conjugator (direct form, sentence completion, contextual tense choice, error correction, occasional full table).
+- **Vocabulary**: due reviews first (about 5 minutes, extended when there is a backlog), then new words in batches of three (introduce, then test), then active recall. FSRS learning steps (1 and 10 minutes) bring failed words back within the module.
+- **Conjugation**: lesson or recap, focus-unit drills, mixed revision across earlier units. Drills come from the deterministic conjugator (direct form, sentence completion, contextual tense choice, error correction, occasional full table).
 - **Grammar**: lesson or recap, focus exercises, mixed revision from due or weak concepts.
 
 ### Grading
 
-- Vocabulary: normalized comparison against the main translation and alternatives. Spanish answers are accent-sensitive: an accent-only error is accepted as "Hard" and flagged. Recognition cards are self-graded after reveal. A mismatch can be checked by the AI or overridden by the learner.
+- Vocabulary: normalized comparison against the main translation and alternatives. Spanish answers are accent-sensitive: an accent-only error is accepted as "Hard" and flagged. Recognition cards are self-graded after reveal. The learner can count a valid alternative as correct.
 - Conjugation: deterministic. Errors are classified as wrong person, wrong tense, incorrect ending, irregular-verb error, missing accent or incorrect stem change by comparing the answer with the verb's full paradigm and with regularized variants.
-- Grammar: deterministic match against accepted answers (blank by blank); otherwise the AI classifies the answer as correct, acceptable alternative, stylistic difference, or an error with its category (grammar, conjugation, vocabulary, orthography), so valid Spanish is not marked wrong for differing from the reference.
+- Grammar: deterministic match against the accepted answers (blank by blank). An open answer that matches no reference is shown with the references, and the learner can count it as correct.
 
 ### Mastery and progression
 
@@ -109,32 +109,15 @@ Within each module, items are chosen on demand (`next` endpoint) from the plan, 
 
 Five parts, 60 minutes, 100 points: dictation (15), conjugation (20), grammar (20), translation (15), writing (30).
 
-Scope (`server/exam/scope.ts`) is computed from the database: concepts and words introduced in the previous six study days, failed items, weaknesses, and older material ranked by staleness. Monthly exams weight the last four weeks at 40%, older material at 40% and recurring weaknesses at 20%.
+Scope (`core/exam/scope.ts`) is computed from the database: concepts and words introduced in the previous six study days, failed items, weaknesses, and older material ranked by staleness. Monthly exams weight the last four weeks at 40%, older material at 40% and recurring weaknesses at 20%.
 
-Generation: conjugation items come from the deterministic engine. Dictation text, grammar items, translation sentences and the writing prompt come from the AI with validation. Without AI, curated fallbacks are used and the exam records that.
+Generation (`core/exam/generate.ts`): conjugation items come from the deterministic engine; grammar items from the curated bank; translation sentences from the examples of the words in scope; the dictation text and the writing prompt (with its model answer) from `content/exam.ts`, chosen by level and not repeated within six exams. Dictation and translation never share sentences.
 
-Taking the exam: answers autosave to the server (and to local storage as a second copy). No feedback or answers are sent to the client before submission. Time counts while the exam page is open. When time is up, the exam is submitted automatically.
+Taking the exam: answers autosave to the database (and to local storage as a second copy). Corrections appear only after submission. Time counts while the exam page is open; when it is up, the exam is submitted automatically.
 
-Grading: dictation by word alignment (spelling, accents, missing and extra words, punctuation); conjugation deterministically; grammar deterministically, then AI for non-matching answers; translation and writing by the AI against a published rubric. Results update concept mastery, weaknesses and vocabulary schedules, so the next week's sessions respond to the exam.
+Grading: dictation by word alignment (spelling, accents, missing and extra words, punctuation; dialogue dashes and quotation marks are ignored because a synthesized voice cannot read them); conjugation and closed grammar items exactly; open grammar answers and translations by similarity to the closest reference (approximate credit); the writing by self-assessment against a model answer on five criteria scored 0 to 6. Until the writing is assessed, the score is shown out of the graded points (for example 62 / 70). Results update concept mastery, weaknesses and vocabulary schedules, so the next week's sessions respond to the exam.
 
-## AI integration
+## Data portability
 
-- `server/ai/provider.ts` defines one interface: `generate({ task, system, prompt, schema, effort })`, returning validated, typed data.
-- Anthropic: `client.beta.messages.parse` with `betaZodOutputFormat` (structured outputs), adaptive thinking, explicit `effort` per task, and server-side refusal fallback (`fallbacks: "default"`).
-- OpenAI: Chat Completions with a JSON schema response format, validated with the same Zod schema.
-- Every call passes the budget guard first (daily and monthly USD caps, calls per minute), is logged in `ai_usage`, and is retried once with the validation errors when the output fails semantic checks.
-- Generated content is validated beyond the schema: blanks match answers, options contain the answer, conjugation contexts are re-checked with the conjugator, new words are deduplicated, lessons are reviewed by a second pass.
-- Results that should be stable (lessons) are cached; exercise banks are persisted and reused.
-
-## Security
-
-- API keys exist only in server environment variables and are read only by server modules (`server-only` guard).
-- A password (`APP_PASSWORD`) protects every page and API route through `src/proxy.ts`; sessions are HMAC-signed, HTTP-only cookies. Without a password the app refuses to serve in production.
-- Login attempts are rate limited. AI spend is capped.
-- Secrets are excluded by `.gitignore`; `.env.example` documents the variables.
-
-## Persistence and operations
-
-- Migrations are generated by drizzle-kit and committed in `drizzle/`. They run at build time on Vercel (`vercel-build`), via `npm run db:migrate`, and lazily on first access.
-- The seed is idempotent and versioned; content updates in new releases are applied automatically without touching learner data.
-- `Settings > Export` downloads all learner data as JSON. `npm run db:backup` writes the same export to `backups/`. Supabase also keeps daily backups.
+- Settings > Your data exports all learner tables to a JSON file, imports such a file (replacing the progress on this device; rows tied to unknown words or concepts are skipped), or erases progress while keeping the settings.
+- The export is the backup: browser storage can be cleared by the learner or, on Safari, after weeks without a visit unless the site is added to the Home Screen.

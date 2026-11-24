@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { api } from "@/core/api";
+import { fromBase64 } from "@/lib/text";
 import { useI18n } from "../i18n";
 import { Button, TextArea } from "../ui/primitives";
+import { spanishVoice } from "../voices";
 
 interface Playback {
   full?: number;
@@ -12,23 +15,11 @@ interface Playback {
 const MAX_FULL = 2;
 const MAX_SEGMENT = 3;
 
-function decode(b64: string): string {
-  const bin = atob(b64);
-  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
-}
-
-function spanishVoice(): SpeechSynthesisVoice | null {
-  if (typeof window === "undefined" || !("speechSynthesis" in window)) return null;
-  const voices = window.speechSynthesis.getVoices();
-  return voices.find((v) => v.lang === "es-ES") ?? voices.find((v) => v.lang.toLowerCase().startsWith("es-es")) ?? voices.find((v) => v.lang.toLowerCase().startsWith("es")) ?? null;
-}
-
 export function Dictation({
   examId,
   segments,
-  tts,
   encoded,
+  voiceName,
   playback,
   onPlayback,
   value,
@@ -36,8 +27,9 @@ export function Dictation({
 }: {
   examId: string;
   segments: number;
-  tts: "server" | "browser";
-  encoded: string[] | null;
+  encoded: string[];
+  /** Preferred voice from the settings ("auto" picks the best Spanish (Spain) voice). */
+  voiceName: string;
   playback: Playback;
   onPlayback: (p: Playback) => void;
   value: string;
@@ -46,28 +38,27 @@ export function Dictation({
   const { t } = useI18n();
   const [playing, setPlaying] = useState<string | null>(null);
   const [voiceMissing, setVoiceMissing] = useState(false);
-  const texts = useRef<string[]>(encoded ? encoded.map(decode) : []);
-  const audio = useRef<HTMLAudioElement | null>(null);
+  const texts = useRef<string[]>(encoded.map(fromBase64));
 
   useEffect(() => {
-    if (tts !== "browser") return;
-    const check = () => setVoiceMissing(!spanishVoice());
+    if (!("speechSynthesis" in window)) {
+      setVoiceMissing(true);
+      return;
+    }
+    const check = () => setVoiceMissing(!spanishVoice(voiceName));
     check();
-    window.speechSynthesis?.addEventListener?.("voiceschanged", check);
-    return () => window.speechSynthesis?.removeEventListener?.("voiceschanged", check);
-  }, [tts]);
+    window.speechSynthesis.addEventListener?.("voiceschanged", check);
+    return () => window.speechSynthesis.removeEventListener?.("voiceschanged", check);
+  }, [voiceName]);
 
-  useEffect(() => () => {
-    window.speechSynthesis?.cancel();
-    audio.current?.pause();
-  }, []);
+  useEffect(() => () => window.speechSynthesis?.cancel(), []);
 
   function speak(text: string, slow: boolean): Promise<void> {
     return new Promise((resolve) => {
       const u = new SpeechSynthesisUtterance(text);
-      const v = spanishVoice();
+      const v = spanishVoice(voiceName);
       if (v) u.voice = v;
-      u.lang = "es-ES";
+      u.lang = v?.lang ?? "es-ES";
       u.rate = slow ? 0.78 : 0.92;
       u.onend = () => resolve();
       u.onerror = () => resolve();
@@ -75,28 +66,20 @@ export function Dictation({
     });
   }
 
-  function playAudio(index: number, slow: boolean): Promise<void> {
-    return new Promise((resolve) => {
-      const a = new Audio(`/api/exam/${examId}/audio/${index}${slow ? "?slow=1" : ""}`);
-      audio.current = a;
-      a.onended = () => resolve();
-      a.onerror = () => resolve();
-      void a.play().catch(() => resolve());
-    });
-  }
-
   async function play(mode: "full" | "segment", index = 0) {
-    if (playing) return;
-    const res = await fetch(`/api/exam/${examId}/play`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode, segment: index }) });
-    if (!res.ok) return;
-    const json = (await res.json()) as { allowed: boolean; playback: Playback };
-    onPlayback(json.playback);
-    if (!json.allowed) return;
+    if (playing || !("speechSynthesis" in window)) return;
+    let res: { allowed: boolean; playback: Playback };
+    try {
+      res = await api.exam.play(examId, mode, index);
+    } catch {
+      return;
+    }
+    onPlayback(res.playback);
+    if (!res.allowed) return;
     setPlaying(mode === "full" ? "full" : String(index));
     const list = mode === "full" ? Array.from({ length: segments }, (_, i) => i) : [index];
     for (const i of list) {
-      if (tts === "browser") await speak(texts.current[i] ?? "", mode === "segment");
-      else await playAudio(i, mode === "segment");
+      await speak(texts.current[i] ?? "", mode === "segment");
       if (mode === "full") await new Promise((r) => setTimeout(r, 350));
     }
     setPlaying(null);
@@ -106,7 +89,7 @@ export function Dictation({
 
   return (
     <div className="flex flex-col gap-6">
-      {tts === "browser" && voiceMissing && <p className="text-[14px] text-caution">{t("exam.noVoice")}</p>}
+      {voiceMissing && <p className="text-[14px] text-caution">{t("exam.noVoice")}</p>}
       <div className="flex flex-wrap items-center gap-4">
         <Button variant="secondary" onClick={() => play("full")} disabled={!!playing || fullLeft <= 0}>
           {t("exam.playText")}

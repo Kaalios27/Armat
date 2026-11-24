@@ -3,34 +3,27 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Personal AI-assisted Spanish learning system: daily vocabulary, conjugation and grammar sessions with weekly examinations.",
+  "description": "Personal Spanish learning system that runs entirely in the browser: daily vocabulary, conjugation and grammar sessions with weekly examinations.",
   "engines": {
     "node": ">=24"
   },
   "scripts": {
+    "predev": "node scripts/copy-pglite.mjs",
     "dev": "next dev",
+    "prebuild": "node scripts/copy-pglite.mjs",
     "build": "next build",
-    "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx scripts/migrate.ts",
-    "db:seed": "tsx scripts/seed.ts",
-    "db:setup": "tsx scripts/migrate.ts && tsx scripts/seed.ts",
-    "db:backup": "tsx scripts/backup.ts",
-    "vercel-build": "tsx scripts/migrate.ts && tsx scripts/seed.ts && next build"
+    "db:generate": "drizzle-kit generate && node scripts/gen-migrations.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^1.12.0",
     "@electric-sql/pglite": "^0.5.17",
     "drizzle-orm": "^0.45.4",
     "geist": "^1.9.2",
     "next": "^16.4.6",
-    "postgres": "^3.4.9",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "server-only": "^0.0.1",
     "ts-fsrs": "^6.0.1",
     "zod": "^4.6.7"
   },

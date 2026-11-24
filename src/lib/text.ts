@@ -251,3 +251,14 @@ export function addAccentToLastWeak(stem: string): string {
 export function accentVowel(ch: string): string {
   return ADD_ACCENT[ch] ?? ch;
 }
+
+/** Base64 of the UTF-8 bytes of a string (browser and Node, no Buffer). */
+export function toBase64(s: string): string {
+  let bin = "";
+  for (const b of new TextEncoder().encode(s)) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+export function fromBase64(b64: string): string {
+  return new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
+}

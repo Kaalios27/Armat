@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDays, endOfLocalDay, localDate, startOfLocalDay, weekday } from "@/server/engine/clock";
+import { addDays, endOfLocalDay, localDate, startOfLocalDay, weekday } from "@/core/engine/clock";
 import {
   adaptNewWordTarget,
   canAdvanceConjugation,
@@ -10,7 +10,7 @@ import {
   updateMastery,
   vocabScore,
   type VocabCandidate,
-} from "@/server/engine/progression";
+} from "@/core/engine/progression";
 import {
   dayKind,
   examKind,
@@ -19,8 +19,9 @@ import {
   firstExamSunday,
   lateExamSunday,
   upcomingExamSunday,
-} from "@/server/engine/schedule";
-import { gradeFromAccuracy, gradeFromAnswer, newCard, retrievability, reviewCard, State } from "@/server/engine/srs";
+} from "@/core/engine/schedule";
+import { gradeFromAccuracy, gradeFromAnswer, newCard, retrievability, reviewCard, State } from "@/core/engine/srs";
+import { allocate } from "@/core/exam/scope";
 import { seededRandom } from "@/lib/text";
 
 describe("calendar", () => {
@@ -139,5 +140,18 @@ describe("progression", () => {
     const picked = selectNewVocab([opaque, cognate, falseFriend], 3, seededRandom("x"));
     expect(picked).toHaveLength(3);
     expect(picked).toContain("b");
+  });
+});
+
+describe("exam allocation", () => {
+  it("splits items between recent, older and weak material", () => {
+    expect(allocate(20, "weekly", { recent: 3, older: 4, weak: 2 })).toEqual({ recent: 12, older: 5, weak: 3 });
+    expect(allocate(20, "monthly", { recent: 3, older: 4, weak: 2 })).toEqual({ recent: 8, older: 8, weak: 4 });
+  });
+
+  it("gives every item to recent material when nothing has been studied yet", () => {
+    // Callers then use the first unit or concept, so the part is never empty.
+    expect(allocate(20, "weekly", { recent: 0, older: 0, weak: 0 })).toEqual({ recent: 20, older: 0, weak: 0 });
+    expect(allocate(20, "weekly", { recent: 0, older: 0, weak: 2 })).toEqual({ recent: 0, older: 0, weak: 20 });
   });
 });

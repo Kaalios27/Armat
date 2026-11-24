@@ -1,11 +1,13 @@
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConjKey } from "@/lib/conjugation/drills";
-import { closeDatabase, type DB } from "@/server/db/client";
-import { exams, exercises, sessionItems } from "@/server/db/schema";
-import { setClock } from "@/server/engine/clock";
-import type { ExamKey } from "@/server/exam/types";
+import { closeDatabase, type DB } from "@/core/db/client";
+import { exams, exercises, sessionItems } from "@/core/db/schema";
+import { setClock } from "@/core/engine/clock";
+import { DICTATIONS, WRITING_PROMPTS } from "@/content/exam";
+import type { ExamKey } from "@/core/exam/types";
 import {
+  assessWriting,
   ensureExam,
   examForTaking,
   examOverview,
@@ -16,8 +18,8 @@ import {
   saveExam,
   startExam,
   submitExam,
-} from "@/server/services/exam";
-import { answerItem, completeModule, ensureTodaySession, nextItem } from "@/server/services/session";
+} from "@/core/services/exam";
+import { answerItem, completeModule, ensureTodaySession, nextItem } from "@/core/services/session";
 import { useTestDb } from "./support/db";
 
 let db: DB;
@@ -83,7 +85,7 @@ describe("weekly exam", () => {
     expect(o.current).toMatchObject({ weekOf: "2026-11-29", number: 1, kind: "weekly", status: "available", canStart: true });
   });
 
-  it("is generated from history with curated fallbacks when AI is off", async () => {
+  it("is generated from history with curated content", async () => {
     const row = await ensureExam("2026-11-29", TZ);
     examId = row.id;
     expect(row.status).toBe("generating");
@@ -95,12 +97,15 @@ describe("weekly exam", () => {
     expect(e.content!.translation.length).toBeGreaterThanOrEqual(3);
     expect(e.content!.dictation.segments).toBeGreaterThan(1);
     expect(e.content!.writing.minWords).toBeGreaterThanOrEqual(70);
-    expect(e.content!.sources.writing).toBe("curated");
     // The answer key never reaches the client.
     expect(JSON.stringify(e)).not.toContain('"answers"');
     const key = (await db.select().from(exams).where(eq(exams.id, examId)))[0]!.key as ExamKey;
     for (const item of e.content!.conjugation) expect(["c-pres-regular", "c-pres-irregular-core"]).toContain(key.conjugation.find((k) => k.id === item.id)!.unitId);
-    // The dictation must not give away the translation answers (curated sentences are split between the parts).
+    // A curated dictation text and writing prompt for the learner's level (1 in the first weeks), with a model answer.
+    expect(DICTATIONS.find((d) => d.id === key.dictation.id)?.level).toBe(1);
+    expect(WRITING_PROMPTS.find((p) => p.id === key.writing.promptId)?.level).toBe(1);
+    expect(key.writing.model?.length).toBeGreaterThan(200);
+    // The dictation must not give away the translation answers.
     for (const t of key.translation) for (const ref of t.references) expect(key.dictation.text).not.toContain(ref);
     // Items are spread over the verbs of the unit.
     const perVerb = new Map<string, number>();
@@ -128,7 +133,7 @@ describe("weekly exam", () => {
     expect(e.elapsedMs).toBe(1_200_000);
   });
 
-  it("grades deterministic parts and marks the writing as provisional without AI", async () => {
+  it("grades every part except the writing, which waits for the self-assessment", async () => {
     await submitExam(examId);
     await runExamGrading(examId, TZ);
     const r = await examResults(examId);
@@ -139,8 +144,22 @@ describe("weekly exam", () => {
     expect(g.parts.grammar.score).toBe(20);
     expect(g.parts.translation.score).toBe(15);
     expect(g.parts.writing.score).toBeNull();
+    expect(g.parts.writing.notes).toContain("self-assessment");
+    expect(g.writing?.model).toBeTruthy();
     expect(g.provisional).toBe(true);
     expect(r.score).toBe(70);
+  });
+
+  it("completes the score with the writing self-assessment", async () => {
+    await expect(assessWriting(examId, { task: 6, grammar: 5 })).rejects.toThrow(/Missing score/);
+    const res = await assessWriting(examId, { task: 6, grammar: 5, conjugation: 4, vocabulary: 5, coherence: 9 });
+    // Scores are clamped to the 0-6 scale: 6 + 5 + 4 + 5 + 6.
+    expect(res.score).toBe(96);
+    const r = await examResults(examId);
+    expect(r.grading!.parts.writing.score).toBe(26);
+    expect(r.grading!.provisional).toBe(false);
+    expect(r.grading!.writing?.selfAssessed).toBe(true);
+    expect(r.maxScore).toBe(100);
   });
 
   it("submits automatically when the time is used", async () => {

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { api } from "@/core/api";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LessonContent } from "@/content/types";
 import type { ConjDrill } from "@/lib/conjugation/drills";
@@ -40,7 +41,6 @@ export interface RunnerProps {
   initialElapsed: number[];
   moduleMs: number;
   titles: Record<string, Localized>;
-  aiEnabled: boolean;
 }
 
 /** Stopwatch based on performance.now(), immune to clock changes. */
@@ -67,18 +67,12 @@ function useStopwatch(initial: number, running: boolean) {
   return useMemo(() => ({ get, reset }), [get, reset]);
 }
 
-async function post<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return (await res.json()) as T;
-}
-
 /** After this long without any input the timer pauses; idle time beyond the grace period is not counted. */
 const IDLE_PAUSE_MS = 3 * 60_000;
 const IDLE_GRACE_MS = 30_000;
 const INPUT_EVENTS = ["pointerdown", "keydown", "wheel", "touchstart", "scroll"] as const;
 
-export function StudyRunner({ sessionId, initialModule, initialElapsed, moduleMs, titles, aiEnabled }: RunnerProps) {
+export function StudyRunner({ sessionId, initialModule, initialElapsed, moduleMs, titles }: RunnerProps) {
   const { t, lang } = useI18n();
   const router = useRouter();
   const [moduleIndex, setModuleIndex] = useState(initialModule);
@@ -103,12 +97,11 @@ export function StudyRunner({ sessionId, initialModule, initialElapsed, moduleMs
   const lastInput = useRef(initialElapsed[initialModule] ?? 0);
   const counted = useCallback(() => Math.round(Math.min(watch.get(), lastInput.current + IDLE_GRACE_MS)), [watch]);
 
+  // Saves the elapsed time of the current module (also when the page is hidden or closed).
   const beat = useCallback(
-    (beacon = false) => {
-      const body = JSON.stringify({ module, elapsedMs: counted() });
-      const url = `/api/session/${sessionId}/heartbeat`;
-      if (beacon && navigator.sendBeacon) navigator.sendBeacon(url, body);
-      else void fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true }).catch(() => {});
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    (_final = false) => {
+      void api.session.heartbeat(sessionId, module, counted()).catch(() => {});
     },
     [module, sessionId, counted],
   );
@@ -160,7 +153,7 @@ export function StudyRunner({ sessionId, initialModule, initialElapsed, moduleMs
     setBusy(true);
     setError(false);
     try {
-      const res = await post<NextResponse>(`/api/session/${sessionId}/next`, { module, elapsedMs: counted() });
+      const res = (await api.session.next(sessionId, module, counted())) as NextResponse;
       if (res.type === "item") {
         setItem(res.item);
         setResult(res.item.status === "done" ? res.item.result : null);
@@ -209,7 +202,7 @@ export function StudyRunner({ sessionId, initialModule, initialElapsed, moduleMs
     if (!item) return;
     setBusy(true);
     try {
-      const res = await post<{ result: Record<string, unknown> }>(`/api/session/${sessionId}/answer`, { itemId: item.id, elapsedMs: counted(), ...body });
+      const res = (await api.session.answer(sessionId, item.id, body, counted())) as unknown as { result: Record<string, unknown> };
       if (then === "next") {
         setItem(null);
         setResult(null);
@@ -234,7 +227,7 @@ export function StudyRunner({ sessionId, initialModule, initialElapsed, moduleMs
   async function finishModule() {
     setBusy(true);
     try {
-      const res = await post<NextResponse>(`/api/session/${sessionId}/complete`, { module, exhausted: true });
+      const res = (await api.session.complete(sessionId, module, true)) as NextResponse;
       if (res.type === "module-complete") setPhase(res.sessionComplete ? "complete" : "transition");
     } catch {
       setError(true);
@@ -393,7 +386,6 @@ export function StudyRunner({ sessionId, initialModule, initialElapsed, moduleMs
                 conceptTitle={item.payload.conceptTitle as Localized}
                 result={result as never}
                 busy={busy}
-                aiEnabled={aiEnabled}
                 onSubmit={(b) => answer(b, "result")}
                 onContinue={next}
                 onOverride={(a) => answer({ override: true, answer: a }, "result")}

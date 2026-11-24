@@ -1,18 +1,23 @@
+"use client";
+
 import Link from "next/link";
 import { CHAPTERS, GRAMMAR_CONCEPTS } from "@/content";
+import { PageError, PageLoading, useLoad } from "@/components/data";
+import { useI18n } from "@/components/i18n";
 import { Bar, PageTitle, Section } from "@/components/ui/primitives";
-import { translator } from "@/lib/i18n/messages";
-import { database } from "@/server/db/client";
-import { conceptProgress } from "@/server/db/schema";
-import { tzHint } from "@/server/http";
-import { getProfile } from "@/server/services/profile";
+import { database } from "@/core/db/client";
+import { conceptProgress } from "@/core/db/schema";
 
-export default async function GrammarPage() {
-  const profile = await getProfile(await tzHint());
-  const lang = profile.uiLang;
-  const t = translator(lang);
+async function loadProgress() {
   const db = await database();
-  const progress = new Map((await db.select().from(conceptProgress)).map((p) => [p.conceptId, p]));
+  return new Map((await db.select().from(conceptProgress)).map((p) => [p.conceptId, p]));
+}
+
+export default function GrammarPage() {
+  const { t, lang } = useI18n();
+  const { data: progress, error, reload } = useLoad(loadProgress, []);
+  if (error) return <PageError onRetry={reload} />;
+  if (!progress) return <PageLoading />;
   const statusLabel = (s: string | undefined) =>
     s === "mastered" ? t("conjugation.statusMastered") : s === "practicing" ? t("conjugation.statusPracticing") : s === "introduced" ? t("conjugation.statusIntroduced") : t("conjugation.statusLocked");
   let n = 0;
