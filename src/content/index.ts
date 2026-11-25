@@ -3,13 +3,16 @@ import { hashString } from "@/lib/text";
 import { CONJUGATION_UNITS } from "./conjugation";
 import { CHAPTERS, GRAMMAR_CONCEPTS } from "./grammar-concepts";
 import { EXERCISES_1, LESSONS_1 } from "./grammar-lessons-1";
+import { EXERCISES_2, LESSONS_2 } from "./grammar-lessons-2";
+import { EXERCISES_3, LESSONS_3 } from "./grammar-lessons-3";
+import { EXERCISES_4, LESSONS_4 } from "./grammar-lessons-4";
 import type { BilingualLesson, GrammarExerciseSeed, LessonContent } from "./types";
 import { VOCAB_SEED } from "./vocab";
 
 export { CHAPTERS, CONJUGATION_UNITS, GRAMMAR_CONCEPTS, VOCAB_SEED };
 
-export const GRAMMAR_LESSONS: Record<string, BilingualLesson> = { ...LESSONS_1 };
-export const GRAMMAR_EXERCISES: GrammarExerciseSeed[] = [...EXERCISES_1];
+export const GRAMMAR_LESSONS: Record<string, BilingualLesson> = { ...LESSONS_1, ...LESSONS_2, ...LESSONS_3, ...LESSONS_4 };
+export const GRAMMAR_EXERCISES: GrammarExerciseSeed[] = [...EXERCISES_1, ...EXERCISES_2, ...EXERCISES_3, ...EXERCISES_4];
 
 export function localizeLesson(lesson: BilingualLesson, lang: Lang): LessonContent {
   return {
