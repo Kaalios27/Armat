@@ -3,6 +3,13 @@ import { cognateScore, lemmaKey, slugify } from "@/lib/lemma";
 import { VOCAB_A } from "./vocab-a";
 import { VOCAB_B } from "./vocab-b";
 import { VOCAB_C } from "./vocab-c";
+import { VOCAB_D } from "./vocab-d";
+import { VOCAB_E } from "./vocab-e";
+import { VOCAB_F } from "./vocab-f";
+import { VOCAB_G } from "./vocab-g";
+import { VOCAB_H } from "./vocab-h";
+import { VOCAB_I } from "./vocab-i";
+import { VOCAB_J } from "./vocab-j";
 
 export interface VocabTranslationSeed {
   main: string;
@@ -58,7 +65,7 @@ export function parseVocabLine(line: string): VocabSeed {
   };
 }
 
-export const VOCAB_SEED: VocabSeed[] = [...VOCAB_A, ...VOCAB_B, ...VOCAB_C].map(parseVocabLine);
+export const VOCAB_SEED: VocabSeed[] = [...VOCAB_A, ...VOCAB_B, ...VOCAB_C, ...VOCAB_D, ...VOCAB_E, ...VOCAB_F, ...VOCAB_G, ...VOCAB_H, ...VOCAB_I, ...VOCAB_J].map(parseVocabLine);
 
 /** Themes used to extend the lexicon with AI-proposed items, in curriculum order. */
 export const VOCAB_THEMES: Array<{ id: string; en: string }> = [
